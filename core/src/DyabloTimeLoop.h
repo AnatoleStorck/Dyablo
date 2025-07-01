@@ -370,6 +370,13 @@ public:
       timers
     );
 
+    std::string particle_spawn_id = configMap.getValue<std::string>("particles", "spawn", "none");
+    this->particle_spawn = ParticleUpdateFactory::make_instance( particle_spawn_id,
+      configMap,
+      this->m_foreach_cell,
+      timers
+    );
+
     std::string mapUserData_id = configMap.getValue<std::string>("amr", "remap", "MapUserData_mean");
     this->mapUserData = MapUserDataFactory::make_instance( mapUserData_id,
       configMap,
@@ -738,10 +745,10 @@ public:
       int nvars = exchange_vars.size();
       if(nvars>0)
       {
-      for(int i=0; i<nvars; i++)
-        field_info.push_back( {exchange_vars[i],i} );
-      auto Uexchange = U.getAccessor(field_info);
-      ghost_comm.exchange_ghosts( Uexchange );
+        for(int i=0; i<nvars; i++)
+          field_info.push_back( {exchange_vars[i],i} );
+        auto Uexchange = U.getAccessor(field_info);
+        ghost_comm.exchange_ghosts( Uexchange );
       }
     };
     
@@ -876,7 +883,10 @@ public:
       }
     }
 
-     
+    if( particle_spawn )
+    {
+      particle_spawn->update( U, m_scalar_data );
+    }
 
     m_iteration_handler->next_iter(m_scalar_data);
     
@@ -970,7 +980,7 @@ private:
   std::unique_ptr<HyperbolicUpdate> rad_updater;
   bool has_mhd, is_glm; // TODO : remove this
   int ghost_count; // TODO : remove this
-  std::unique_ptr<ParticleUpdate> particle_position_updater, particle_update_density;
+  std::unique_ptr<ParticleUpdate> particle_position_updater, particle_update_density, particle_spawn;
   std::unique_ptr<MapUserData> mapUserData;
   std::unique_ptr<IOManager> io_manager, io_manager_checkpoint;
   std::unique_ptr<GravitySolver> gravity_solver;
