@@ -207,6 +207,18 @@ public:
     
   void distributeAllParticles();
 
+  /***
+   * @brief Delete particle array `name` from user data
+   ***/
+  void delete_ParticleArray( const std::string& name );
+
+  /**
+   * Merge particle arrays id_dest <- [id_dest,id_to_merge]
+   * Particles are only merged if attribute id_to_merge/mask_field is not 0
+   * Particle id_to_merge should have all attributes from id_dest, other attributes are ignored
+   **/
+  void merge_particles_if( const std::string& id_dest, const std::string& id_to_merge, const std::string& mask_field );
+
 private:
   struct Fields
   {
