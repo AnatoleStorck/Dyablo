@@ -3,6 +3,18 @@
 
 namespace dyablo{
 
+namespace{
+
+Kokkos::Array<real_t, 3> vector_to_array( const std::vector<real_t>& in )
+{
+    return Kokkos::Array<real_t, 3> {
+        in.size() >= 1 ? in[0] : 0,
+        in.size() >= 2 ? in[1] : 0,
+        in.size() >= 3 ? in[2] : 0,
+    };
+};
+}
+
 struct AnalyticalFormula_blast : public AnalyticalFormula_base_hydro
 {
      // blast problem parameters
@@ -15,6 +27,8 @@ struct AnalyticalFormula_blast : public AnalyticalFormula_base_hydro
     const real_t blast_density_out;
     const real_t blast_pressure_in;
     const real_t blast_pressure_out;
+    Kokkos::Array<real_t, 3> blast_velocity_in;
+    Kokkos::Array<real_t, 3> blast_velocity_out;
     const int blast_nx;
     const int blast_ny;
     const int blast_nz;
@@ -35,6 +49,8 @@ struct AnalyticalFormula_blast : public AnalyticalFormula_base_hydro
         blast_density_out ( configMap.getValue<real_t>("blast","density_out", 1.2) ),
         blast_pressure_in ( configMap.getValue<real_t>("blast","pressure_in", 10.0) ),
         blast_pressure_out ( configMap.getValue<real_t>("blast","pressure_out", 0.1) ),
+        blast_velocity_in (vector_to_array( configMap.getValue<std::vector<real_t>>("blast","velocity_in", {0, 0, 0}))),
+        blast_velocity_out (vector_to_array( configMap.getValue<std::vector<real_t>>("blast","velocity_out", {0, 0, 0}))),
         // Number of quadrants in each direction
         blast_nx ( configMap.getValue<int>("blast", "blast_nx", 1) ),
         blast_ny ( configMap.getValue<int>("blast", "blast_ny", 1) ),
@@ -109,17 +125,23 @@ struct AnalyticalFormula_blast : public AnalyticalFormula_base_hydro
         real_t r2 = (x-qcx)*(x-qcx) + (y-qcy)*(y-qcy);
         if( this->ndim == 3 ) r2 += (z-qcz)*(z-qcz);
         
-        State res;
+        HyperbolicPolicy_State_Hydro::PrimState q;
 
         if (r2 < radius*radius) {
-            res.rho = blast_density_in;
-            res.e_tot = blast_pressure_in/(gamma0-1.0);;
+            q.rho = blast_density_in;
+            q.p = blast_pressure_in;
+            q.u = blast_velocity_in[IX];
+            q.v = ndim >= 2 ? blast_velocity_in[IY] : 0; 
+            q.w = ndim >= 3 ? blast_velocity_in[IZ] : 0;
         } else {
-            res.rho = blast_density_out;
-            res.e_tot = blast_pressure_out/(gamma0-1.0);
+            q.rho = blast_density_out;
+            q.p = blast_pressure_out;
+            q.u = blast_velocity_out[IX];
+            q.v = ndim >= 2 ? blast_velocity_out[IY] : 0;
+            q.w = ndim >= 3 ? blast_velocity_out[IZ] : 0;
         }
 
-        return res;
+        return HyperbolicPolicy_State_Hydro({ndim, gamma0}).primToCons(q);
     } 
 };
 
