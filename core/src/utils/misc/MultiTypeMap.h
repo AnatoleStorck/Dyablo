@@ -59,6 +59,12 @@ public:
     getMap<T>()[name] = v;
   }
 
+  template <typename T> 
+  bool hasValue( const std::string& name )
+  {
+    return getMap<T>().count(name) != 0;
+  }
+
   template <typename T, typename Func>
   void foreach_var_t(const Func& f)
   {
