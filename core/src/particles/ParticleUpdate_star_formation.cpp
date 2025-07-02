@@ -97,10 +97,7 @@ public:
     const real_t min_dy = Ly / ((1 << level_max) * by);
     const real_t min_dz = Lz / ((1 << level_max) * bz);
 
-    const real_t vol_min_physical = min_dx * min_dy * min_dz;
-
-    this->Mstar_physical = rho_threshold_physical * vol_min_physical;
-
+    this->vol_min = min_dx * min_dy * min_dz;
   }
 
   void update(UserData& U, ScalarSimulationData& scalar_data)
@@ -117,7 +114,7 @@ public:
     using P_over_rho_u = decltype(Units::m2() / Units::s2());
     const real_t P_over_rho_threshold = Units::physical_to_supercomoving<P_over_rho_u>(this->P_over_rho_threshold_physical, aexp);
     
-    const real_t Mstar = Units::physical_to_supercomoving<Units::Mass>(this->Mstar_physical, aexp);;
+    const real_t Mstar = rho_threshold * this->vol_min;
     const real_t epsilon_star = this->epsilon_star;
     using G_unit = decltype(Units::NEWTON_G());
     const real_t G = Units::physical_to_supercomoving<G_unit>(Units::constant_to_code_units(Units::NEWTON_G()), aexp);
@@ -241,7 +238,7 @@ private:
   Policy_Params policy_params;
   real_t rho_threshold_physical, P_over_rho_threshold_physical;
   real_t epsilon_star;
-  real_t Mstar_physical;
+  real_t vol_min;
   int seed;
   rand::RNGPool rand_pool;
 
