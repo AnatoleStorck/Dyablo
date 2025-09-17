@@ -19,9 +19,11 @@ public:
     foreach_particle( foreach_cell.get_amr_mesh(), configMap ),
     timers          ( timers ),
     gamma0          ( configMap.getValue<real_t>("hydro", "gamma0", 1.4) ),
-    eta_SN          ( configMap.getValue<real_t>("star_feedback", "eta_SN", 0.1) ),
-    E_SN_physical   ( configMap.getValue_in_code_unit<Units::Energy>("star_feedback", "energy_threshold", "1e51 erg") ),
-    t_SN_physical   ( configMap.getValue_in_code_unit<Units::Time>("star_feedback", "time_delay", "10 Myr") )
+    eta_SNII        ( configMap.getValue<real_t>("star_feedback", "eta_SNII", 0.1) ),
+    yield_SNII      ( configMap.getValue<real_t>("star_feedback", "yield_SNII", 0.1) ),
+    E_SNII_physical ( configMap.getValue_in_code_unit<Units::Energy>("star_feedback", "E_SNII", "1e51 erg") ),
+    M_SNII_physical ( configMap.getValue_in_code_unit<Units::Mass>  ("star_feedback", "M_SNII", "10 Msun") ),
+    t_SNII_physical ( configMap.getValue_in_code_unit<Units::Time>  ("star_feedback", "t_SNII", "10 Myr") )
   {
   }
 
@@ -33,44 +35,60 @@ public:
     const real_t dt = scalar_data.get<real_t>("dt");
 
     enum VarIndex {
-      IRho, IE_tot, IRho_vx, IRho_vy, IRho_vz,
-      // Updates from SN feedback
-      IRho_SN, IE_tot_SN, IRho_vx_SN, IRho_vy_SN, IRho_vz_SN
+      IRho, IE_tot, IRho_vx, IRho_vy, IRho_vz, IRho_Z,
     };
     enum VarIndex_particle {
-      IMASS, IVX, IVY, IVZ, IBIRTH
+      IMASS, IVX, IVY, IVZ, IBIRTH, IMETAL
     };
 
     timers.get("ParticleUpdate_feedback").start();
 
-    U.new_fields({"rho_SN", "e_tot_SN", "rho_vx_SN", "rho_vy_SN", "rho_vz_SN"});
+    std::set<std::string> fields = {"rho_SN", "e_tot_SN", "rho_vx_SN", "rho_vy_SN", "rho_vz_SN"};
+    std::set<std::string> pfields = {"rho", "e_tot", "rho_vx", "rho_vy", "rho_vz"};
+    std::vector<UserData::FieldAccessor_FieldInfo>
+      Uin_infos = {{"rho", IRho},    {"e_tot", IE_tot},    {"rho_vx", IRho_vx},    {"rho_vy", IRho_vy},    {"rho_vz", IRho_vz}},
+      USN_infos = {{"rho_SN", IRho}, {"e_tot_SN", IE_tot}, {"rho_vx_SN", IRho_vx}, {"rho_vy_SN", IRho_vy}, {"rho_vz_SN", IRho_vz}};
+    std::vector<UserData::ParticleAccessor_AttributeInfo>
+      pinfos = {{"mass", IMASS}, {"vx", IVX}, {"vy", IVY}, {"vz", IVZ}, {"birth_time", IBIRTH}};
 
+    bool has_metallicity = U.has_field("metallicity");
+    if (has_metallicity) {
+      fields.insert("metallicity_SN");
+      pfields.insert("metallicity");
+
+      Uin_infos.push_back( {"metallicity",    IRho_Z} );
+      USN_infos.push_back( {"metallicity_SN", IRho_Z} );
+      pinfos.push_back( {"metallicity", IMETAL} );
+    }
+
+    U.new_fields(fields);
+
+    // Get accessors
     auto Ppos = U.getParticleArray( "particles" );
-    auto Pdata = U.getParticleAccessor( "particles", {{"mass", IMASS}, {"vx", IVX},{"vy", IVY},{"vz", IVZ}, {"birth_time", IBIRTH}} );
-
-    // Accessor of hydro fields
-    auto Uin = U.getAccessor({ {"rho", IRho}, {"e_tot", IE_tot}, {"rho_vx", IRho_vx}, {"rho_vy", IRho_vy}, {"rho_vz", IRho_vz} });
-    // Accessor of SN feedback yields
-    auto USN = U.getAccessor({ {"rho_SN", IRho_SN}, {"e_tot_SN", IE_tot_SN}, {"rho_vx_SN", IRho_vx_SN}, {"rho_vy_SN", IRho_vy_SN}, {"rho_vz_SN", IRho_vz_SN}});
+    auto Pdata = U.getParticleAccessor( "particles", pinfos );
+    auto Uin = U.getAccessor( Uin_infos );
+    auto USN = U.getAccessor( USN_infos );
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
     real_t aexp = scalar_data.get<real_t>("aexp");
 
     // Gather SN feedback parameters
-    real_t eta_SN = this->eta_SN;
-    real_t E_SN = Units::physical_to_supercomoving<Units::Energy>(E_SN_physical, aexp);
-    real_t t_SN = Units::physical_to_supercomoving<Units::Time>(t_SN_physical, aexp);
+    const real_t eta_SNII = this->eta_SNII;
+    const real_t yield_SNII = this->yield_SNII;
+    const real_t E_SNII = Units::physical_to_supercomoving<Units::Energy>(E_SNII_physical, aexp);
+    const real_t M_SNII = Units::physical_to_supercomoving<Units::Mass>(M_SNII_physical, aexp);
+    const real_t E_per_M_SNII = E_SNII / M_SNII;
+    const real_t t_SNII = Units::physical_to_supercomoving<Units::Time>(t_SNII_physical, aexp);
 
     foreach_particle.foreach_particle( "particles_update_feedback", Ppos,
       KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
     {
       // Age of the particle
-      // TODO: this is a difference of conformal times, should be converted to physical
       real_t age = t - Pdata.at(iPart, IBIRTH);
 
       // If the SN will explode in this time step
-      if ((age < t_SN) & ((age + dt) > t_SN)) {
+      if ((age < t_SNII) & ((age + dt) > t_SNII)) {
         pos_t part_pos = {Ppos.pos(iPart, IX), Ppos.pos(iPart, IY), Ppos.pos(iPart, IZ)};
         pos_t part_vel = {Pdata.at(iPart, IVX), Pdata.at(iPart, IVY), Pdata.at(iPart, IVZ)};
 
@@ -81,22 +99,27 @@ public:
 
         // Compute ejecta mass, thermal energy + kinetic energy
         real_t Mstar = Pdata.at(iPart, IMASS);
-        real_t Mejecta = Mstar * eta_SN;
-        real_t ethermal = E_SN / cell_volume;
-        real_t rho_ejecta = Mejecta / cell_volume;
-        real_t ekin = 0.5 * rho_ejecta * (
+        real_t Mloss = Mstar * eta_SNII;
+        real_t rho_loss = Mloss / cell_volume;
+
+        real_t ethermal = E_per_M_SNII * rho_loss;
+        real_t ekin = 0.5 * rho_loss * (
           SQR(part_vel[IX]) + SQR(part_vel[IY]) + SQR(part_vel[IZ])
         );
 
         // Atomic are mandatory since multiple particles can explode in the same cell
-        Kokkos::atomic_add(&USN.at(iCell, IRho_SN), rho_ejecta);
-        Kokkos::atomic_add(&USN.at(iCell, IE_tot_SN), ethermal + ekin);
-        Kokkos::atomic_add(&USN.at(iCell, IRho_vx_SN), rho_ejecta * part_vel[IX]);
-        Kokkos::atomic_add(&USN.at(iCell, IRho_vy_SN), rho_ejecta * part_vel[IY]);
-        Kokkos::atomic_add(&USN.at(iCell, IRho_vz_SN), rho_ejecta * part_vel[IZ]);
+        Kokkos::atomic_add(&USN.at(iCell, IRho), rho_loss);
+        Kokkos::atomic_add(&USN.at(iCell, IE_tot), ethermal + ekin);
+        Kokkos::atomic_add(&USN.at(iCell, IRho_vx), rho_loss * part_vel[IX]);
+        Kokkos::atomic_add(&USN.at(iCell, IRho_vy), rho_loss * part_vel[IY]);
+        Kokkos::atomic_add(&USN.at(iCell, IRho_vz), rho_loss * part_vel[IZ]);
+        if (has_metallicity) {
+          real_t Z_loss = yield_SNII + (1 - yield_SNII) * Pdata.at(iPart, IMETAL);
+          Kokkos::atomic_add(&USN.at(iCell, IRho_Z), rho_loss * Z_loss);
+        }
 
         // Update particle properties
-        Pdata.at(iPart, IMASS) -= Mejecta;
+        Pdata.at(iPart, IMASS) -= Mloss;
       }
     });
 
@@ -105,19 +128,18 @@ public:
       KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell )
     {
       // Note: we do not need atomic here since each cell is processed once
-      Uin.at(iCell, IRho)    += USN.at(iCell, IRho_SN);
-      Uin.at(iCell, IE_tot)  += USN.at(iCell, IE_tot_SN);
-      Uin.at(iCell, IRho_vx) += USN.at(iCell, IRho_vx_SN);
-      Uin.at(iCell, IRho_vy) += USN.at(iCell, IRho_vy_SN);
-      Uin.at(iCell, IRho_vz) += USN.at(iCell, IRho_vz_SN);
+      Uin.at(iCell, IRho)    += USN.at(iCell, IRho);
+      Uin.at(iCell, IE_tot)  += USN.at(iCell, IE_tot);
+      Uin.at(iCell, IRho_vx) += USN.at(iCell, IRho_vx);
+      Uin.at(iCell, IRho_vy) += USN.at(iCell, IRho_vy);
+      Uin.at(iCell, IRho_vz) += USN.at(iCell, IRho_vz);
+      if (has_metallicity)
+        Uin.at(iCell, IRho_Z)  += USN.at(iCell, IRho_Z);
     });
 
     // Clean SN feedback yields
-    U.delete_field("rho_SN");
-    U.delete_field("e_tot_SN");
-    U.delete_field("rho_vx_SN");
-    U.delete_field("rho_vy_SN");
-    U.delete_field("rho_vz_SN");
+    for (const std::string& name : fields)
+      U.delete_field(name);
 
     timers.get("ParticleUpdate_feedback").stop();
   }
@@ -128,9 +150,11 @@ private:
   Timers& timers;
   real_t gamma0;
 
-  real_t eta_SN;
-  real_t E_SN_physical;
-  real_t t_SN_physical;
+  real_t eta_SNII;
+  real_t yield_SNII;
+  real_t E_SNII_physical;
+  real_t M_SNII_physical;
+  real_t t_SNII_physical;
 };
 
 } // namespace dyablo
