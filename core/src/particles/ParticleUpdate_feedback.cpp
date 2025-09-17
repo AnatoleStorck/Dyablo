@@ -18,7 +18,6 @@ public:
   : foreach_cell    ( foreach_cell ),
     foreach_particle( foreach_cell.get_amr_mesh(), configMap ),
     timers          ( timers ),
-    gamma0          ( configMap.getValue<real_t>("hydro", "gamma0", 1.4) ),
     eta_SNII        ( configMap.getValue<real_t>("star_feedback", "eta_SNII", 0.1) ),
     yield_SNII      ( configMap.getValue<real_t>("star_feedback", "yield_SNII", 0.1) ),
     E_SNII_physical ( configMap.getValue_in_code_unit<Units::Energy>("star_feedback", "E_SNII", "1e51 erg") ),
@@ -148,7 +147,6 @@ private:
   ForeachCell& foreach_cell;
   ForeachParticle foreach_particle;
   Timers& timers;
-  real_t gamma0;
 
   real_t eta_SNII;
   real_t yield_SNII;
