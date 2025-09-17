@@ -110,6 +110,11 @@ public:
 
     const real_t dt = scalar_data.get<real_t>("dt");
     const real_t aexp = scalar_data.hasValue<real_t>("aexp") ? scalar_data.get<real_t>("aexp") : 1;
+
+    const real_t time = scalar_data.hasValue<real_t>("time_physical") ?
+      scalar_data.get<real_t>("time_physical")
+      : scalar_data.get<real_t>("time");
+
     const real_t rho_threshold = Units::physical_to_supercomoving<Units::Density>(this->rho_threshold_physical, aexp);
     using P_over_rho_u = decltype(Units::m2() / Units::s2());
     const real_t P_over_rho_threshold = Units::physical_to_supercomoving<P_over_rho_u>(this->P_over_rho_threshold_physical, aexp);
@@ -157,20 +162,21 @@ public:
     });
 
     U.new_ParticleArray("spawned_particles", n_star_forming_cells);
-    U.new_ParticleAttribute("spawned_particles","mass");
-    U.new_ParticleAttribute("spawned_particles","vx");
-    U.new_ParticleAttribute("spawned_particles","vy");
-    U.new_ParticleAttribute("spawned_particles","vz");
+    U.new_ParticleAttribute("spawned_particles", "mass");
+    U.new_ParticleAttribute("spawned_particles", "vx");
+    U.new_ParticleAttribute("spawned_particles", "vy");
+    U.new_ParticleAttribute("spawned_particles", "vz");
 
     { // scope guard important to avoid keeping references to "spawned_particles" array
       enum VarIndex_particle{
-        IMASS, IVX, IVY, IVZ
+        IMASS, IVX, IVY, IVZ, IBIRTH_TIME
       };
       UserData::ParticleAccessor Pnew_data = U.getParticleAccessor( "spawned_particles", {
         {"mass", IMASS},
         {"vx", IVX},
         {"vy", IVY},
-        {"vz", IVZ}
+        {"vz", IVZ},
+        {"birth_time", IBIRTH_TIME}
       });
 
       auto Pnew = U.getParticleArray( "spawned_particles" );
@@ -198,6 +204,7 @@ public:
         Pnew_data.at(iPart, IVX) = q.u; 
         Pnew_data.at(iPart, IVY) = q.v; 
         Pnew_data.at(iPart, IVZ) = q.w; 
+        Pnew_data.at(iPart, IBIRTH_TIME) = time;
 
         real_t Mparticle = 0;
         {
@@ -215,8 +222,6 @@ public:
           Mparticle = FMIN(Nstar * Mstar, 0.9 * Mcell);
         }
         Pnew_data.at(iPart, IMASS) = Mparticle;
-
-        
 
         q.rho -= Mparticle / Vcell;
         auto u_out = policy.primToCons( q );
