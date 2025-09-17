@@ -37,7 +37,12 @@ for amr_fname, part_fname in zip(amr_series, part_series):
     rhov_g = np.asarray(snap.getMomentum(cells))
     pg = (rhov_g * vol_g[:, None]).sum(axis=0)
     eg = snap.getTotalEnergy()
+    Zg = np.array(snap.readAllFloat("metallicity")) / np.array(snap.getDensity(cells))
 
+    # Gas metallicity should be constant
+    np.testing.assert_allclose(Zg, 1)
+
+    t.append(snap.getTime())
     with h5py.File(part_fname.replace(".xmf", ".h5")) as part_snap:
         mm = part_snap["mass"][:]
         vv = np.stack(
@@ -48,6 +53,15 @@ for amr_fname, part_fname in zip(amr_series, part_series):
         pp = (mm[:, None] * vv).sum(axis=0)
         ep = (0.5 * mm * (vv**2).sum(axis=1)).sum()
 
+        Zp = part_snap["metallicity"][:]
+        tp = part_snap["birth_time"][:]
+
+        # Particle metallicity should be constant
+        np.testing.assert_allclose(Zp, 1)
+
+        # Formation time should be less than current time
+        np.testing.assert_array_less(tp, t[-1])
+
     m_gas.append(mg)
     m_gas_all.append(vol_g * np.asarray(snap.getDensity(cells)))
     m_part.append(mp)
@@ -55,7 +69,6 @@ for amr_fname, part_fname in zip(amr_series, part_series):
     p_part.append(pp)
     e_gas.append(eg)
     e_part.append(ep)
-    t.append(snap.getTime())
 
 # Convert to numpy arrays
 m_gas = np.asarray(m_gas)

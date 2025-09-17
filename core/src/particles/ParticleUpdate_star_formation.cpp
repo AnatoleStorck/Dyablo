@@ -250,8 +250,14 @@ public:
 
           Mparticle = FMIN(Nstar * Mstar, 0.9 * Mcell);
         }
+
         Pnew_data.at(iPart, IMASS) = Mparticle;
-        Pnew_data.at(iPart, IMETALLICITY) = has_metallicity ? (UinZ.at(iCell, 0) / q.rho) : 0.0;
+        if (has_metallicity) {
+          real_t Zcell = UinZ.at_ivar(iCell, 0) / q.rho;
+          Pnew_data.at(iPart, IMETALLICITY) = Zcell;
+          // Need to update cell metallicity to account for change in density
+          UinZ.at_ivar(iCell, 0) -= Zcell * Mparticle / Vcell;
+        }
 
         q.rho -= Mparticle / Vcell;
         auto u_out = policy.primToCons( q );
