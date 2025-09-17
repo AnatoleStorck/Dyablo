@@ -71,6 +71,17 @@ public:
       configMap.getValue_in_code_unit<Units::Temperature>("star_formation", "temperature_threshold", "1e4 K") *
       Units::constant_to_code_units(Units::KBOLTZ() / Units::PROTON_MASS())
     ),
+    rho_m([&configMap]() {
+      const auto H0 = configMap.getValue<real_t>("cosmology", "h", 0.7) * 100.0 * Units::km() / Units::s() / Units::Mpc();
+      const auto rhoc = 3 * H0 * H0 / (8 * M_PI * Units::NEWTON_G());
+      const auto omegam = configMap.getValue<real_t>("cosmology", "omegam", 0.3);
+
+      // Set it to zero if not cosmological run
+      if( !configMap.getValue<bool>("cosmology", "enable", false) )
+        return 0.0;
+      else
+        return Units::constant_to_code_units(rhoc * omegam);
+    }()),
     epsilon_star    ( configMap.getValue<real_t>("star_formation", "epsilon_star") ),    
     seed            ( 100 ),
     rand_pool       ( seed*GlobalMpiSession::get_comm_world().MPI_Comm_rank()+1)
@@ -115,7 +126,10 @@ public:
       scalar_data.get<real_t>("time_physical")
       : scalar_data.get<real_t>("time");
 
-    const real_t rho_threshold = Units::physical_to_supercomoving<Units::Density>(this->rho_threshold_physical, aexp);
+    const real_t rho_threshold = FMAX(
+      Units::physical_to_supercomoving<Units::Density>(this->rho_threshold_physical, aexp),
+      200.0 * rho_m
+    );
     using P_over_rho_u = decltype(Units::m2() / Units::s2());
     const real_t P_over_rho_threshold = Units::physical_to_supercomoving<P_over_rho_u>(this->P_over_rho_threshold_physical, aexp);
     
@@ -166,6 +180,7 @@ public:
     U.new_ParticleAttribute("spawned_particles", "vx");
     U.new_ParticleAttribute("spawned_particles", "vy");
     U.new_ParticleAttribute("spawned_particles", "vz");
+    U.new_ParticleAttribute("spawned_particles", "birth_time");
 
     { // scope guard important to avoid keeping references to "spawned_particles" array
       enum VarIndex_particle{
@@ -231,7 +246,7 @@ public:
     }
 
     // Merge spawned_particles to particles ignoring particles with mass=0
-    U.merge_particles_if( "particles", "spawned_particles", "mass" );    
+    U.merge_particles_if( "particles", "spawned_particles", "mass" );
 
     timers.get("ParticleUpdate_star_formation").stop();
   }
@@ -242,6 +257,7 @@ private:
   Timers& timers;
   Policy_Params policy_params;
   real_t rho_threshold_physical, P_over_rho_threshold_physical;
+  real_t rho_m;
   real_t epsilon_star;
   real_t vol_min;
   int seed;
