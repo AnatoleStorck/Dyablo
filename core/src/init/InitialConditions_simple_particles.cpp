@@ -100,7 +100,6 @@ public:
           Pdata.at_ivar(iPart, ivar) = attribute_values(iPart, ivar);
         }
       });
-
     }
 
     U.distributeParticles(array_name);
