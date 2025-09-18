@@ -7,9 +7,9 @@
 #include <hdf5_hl.h>
 
 namespace dyablo {
-  
+
   namespace {
-  
+
   /***
    * @brief Get the index of the value in the axes
    *
@@ -47,7 +47,7 @@ namespace dyablo {
     }
     return {i, f};
   }
-  
+
   KOKKOS_INLINE_FUNCTION
   real_t interpolate(
     const Kokkos::View<real_t**> table,
@@ -75,7 +75,7 @@ namespace dyablo {
     // Handle out-of-bounds (clamp to µ_min and µ_max)
     real_t Tmu_low  = T_grid(0)    * mu_table(inH, 0);
     real_t Tmu_high = T_grid(imax) * mu_table(inH, imax);
-  
+
     if (T_over_mu  <= Tmu_low) {
       return {0,      0.};
     } else if (T_over_mu >= Tmu_high) {
@@ -94,12 +94,12 @@ namespace dyablo {
   }
 
   struct GrackleTable {
-    Kokkos::View<real_t***> data;
+    Kokkos::View<real_t***, Kokkos::LayoutRight> data;
     Kokkos::View<real_t*> temperature;
     Kokkos::View<real_t*> log_nH;
     Kokkos::View<real_t*> redshift;
   };
-  
+
   enum VarIndex_Cooling {Irho, IE_tot, Irho_vx, Irho_vy, Irho_vz};
 }
 
@@ -164,7 +164,7 @@ public:
     H5Sget_simple_extent_dims(filespace, dims, NULL);
 
     hid_t read_properties = H5Pcreate(H5P_DATASET_XFER);
-    
+
     // Read "Parameter1" (array of Hydrogen densities)
     hid_t attr_nH = H5Aopen(dataset, "Parameter1", H5P_DEFAULT);
     hsize_t adims_nH[1];
@@ -173,7 +173,7 @@ public:
     H5Sget_simple_extent_dims(aspace, adims_nH, NULL);
     if (adims_nH[0] != dims[0])
     throw std::runtime_error("Error reading cooling table: " + name + " Parameter1 size mismatch");
-    
+
     // Read "Parameter2" (array of redshifts)
     hid_t attr_redshift = H5Aopen(dataset, "Parameter2", H5P_DEFAULT);
     hsize_t adims_redshift[1];
@@ -182,7 +182,7 @@ public:
     H5Sget_simple_extent_dims(aspace, adims_redshift, NULL);
     if (adims_redshift[0] != dims[1])
     throw std::runtime_error("Error reading cooling table: " + name + " Parameter2 size mismatch");
-    
+
     // Read "Temperature" (array of temperatures)
     hid_t attr_temperature = H5Aopen(dataset, "Temperature", H5P_DEFAULT);
     hsize_t adims_temperature[1];
@@ -191,9 +191,11 @@ public:
     H5Sget_simple_extent_dims(aspace, adims_temperature, NULL);
     if (adims_temperature[0] != dims[2])
     throw std::runtime_error("Error reading cooling table: " + name + " Parameter2 size mismatch");
+
     // Allocate memory
     GrackleTable table;
-    table.data = Kokkos::View<real_t***>(name, dims[0], dims[1], dims[2]);
+    // We NEED a LayoutRight here because we read data in C order from HDF5
+    table.data = Kokkos::View<real_t***, Kokkos::LayoutRight>(name, dims[0], dims[1], dims[2]);
     table.log_nH = Kokkos::View<real_t*>("log_nH", adims_nH[0]);
     table.redshift = Kokkos::View<real_t*>("redshift", adims_redshift[0]);
     table.temperature = Kokkos::View<real_t*>("temperature", adims_temperature[0]);
@@ -206,16 +208,16 @@ public:
     #else
       auto data_host = Kokkos::create_mirror_view(table.data);
       status = H5Dread(dataset, hdf5_type, filespace, filespace, read_properties, data_host.data());
-      
+
       auto nH_host = Kokkos::create_mirror_view(table.log_nH);
       status = std::min(status, H5Aread(attr_nH, atype_nH, nH_host.data()));
-      
+
       auto redshift_host = Kokkos::create_mirror_view(table.redshift);
       status = std::min(status, H5Aread(attr_redshift, atype_redshift, redshift_host.data()));
-      
+
       auto Temperature_host = Kokkos::create_mirror_view(table.temperature);
       status = std::min(status, H5Aread(attr_temperature, atype_temperature, Temperature_host.data()));
-      
+
       Kokkos::deep_copy(table.data, data_host);
       Kokkos::deep_copy(table.log_nH, nH_host);
       Kokkos::deep_copy(table.redshift, redshift_host);
@@ -236,41 +238,42 @@ public:
     timers.get("Cooling simple").start();
 
     auto Uout = U.getAccessor({
-          {"rho",    Irho}, 
-          {"e_tot",  IE_tot},
-          {"rho_vx", Irho_vx},
-          {"rho_vy", Irho_vy},
-          {"rho_vz", Irho_vz},
+          {"rho_next",    Irho},
+          {"e_tot_next",  IE_tot},
+          {"rho_vx_next", Irho_vx},
+          {"rho_vy_next", Irho_vy},
+          {"rho_vz_next", Irho_vz},
     });
 
     const auto& CTable = this->C;
     const auto& HTable = this->H;
     const auto& muTable = this->mu;
-    
+
     real_t redshift = 1/scalar_data.get<real_t>("aexp") - 1;
 
     // -----------------------------------------------------------
     // Interpolate on redshift space
-    Kokkos::View<real_t**> Cz("cooling_rate_at_z", CTable.data.extent(0), CTable.data.extent(1));
-    Kokkos::View<real_t**> Hz("heating_rate_at_z", HTable.data.extent(0), HTable.data.extent(1));
-    Kokkos::View<real_t**> muz("mu_at_z", muTable.data.extent(0), muTable.data.extent(1));
+    Kokkos::View<real_t**> Cz("cooling_rate_at_z", CTable.data.extent(0), CTable.data.extent(2));
+    Kokkos::View<real_t**> Hz("heating_rate_at_z", HTable.data.extent(0), HTable.data.extent(2));
+    Kokkos::View<real_t**> muz("mu_at_z", muTable.data.extent(0), muTable.data.extent(2));
 
-    Kokkos::parallel_for("Cooling::interpolate_redshift", 
-      Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0}, {CTable.data.extent(0)-1, CTable.data.extent(1)-1}),
+    Kokkos::parallel_for("Cooling::interpolate_redshift",
+      Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0}, {CTable.data.extent(0), CTable.data.extent(2)}),
       KOKKOS_LAMBDA(const size_t i, const size_t j) {
         const auto& [iz, fz] = get_index(CTable.redshift, redshift);
-        Cz(i,j) = ((1 - fz) * CTable.data(i, iz, j) + fz * CTable.data(i, iz+1, j));
-        Hz(i,j) = ((1 - fz) * HTable.data(i, iz, j) + fz * HTable.data(i, iz+1, j));
+        Cz(i,j)  = (1 - fz) * CTable.data(i, iz, j) + fz * CTable.data(i, iz+1, j);
+        Hz(i,j)  = (1 - fz) * HTable.data(i, iz, j) + fz * HTable.data(i, iz+1, j);
         muz(i,j) = (1 - fz) * muTable.data(i, iz, j) + fz * muTable.data(i, iz+1, j);
     });
 
     // ----------------------------------------------------------
     // Cooling timeloop
-   
+
     Units::Time code_time = Units::code_units().getUnit(Units::s());
     const real_t dt_tot_s = (scalar_data.get<real_t>("dt") * code_time).convert_to(Units::s());
     real_t XH = Units::XH().convert_to(Units::one());
-    
+
+    real_t gamma0 = this->gamma0;
     real_t gammam1 = gamma0 - 1;
 
     Units::Density mp_per_cc = Units::PROTON_MASS() / Units::cm3();
@@ -281,19 +284,23 @@ public:
     Units::Temperature K = Units::Kelvin();
     Units::Pressure erg_per_cc = Units::erg() / Units::cm3();
 
-    foreach_cell.foreach_cell( "Cooling::update", Uout.getShape(),
-      KOKKOS_LAMBDA(const ForeachCell::CellIndex& iCell_Uout) {
+    int Nsteps_tot = 0;
+    int Ncells_tot = 0;
+
+    foreach_cell.reduce_cell( "Cooling::update", Uout.getShape(),
+      KOKKOS_LAMBDA(const ForeachCell::CellIndex& iCell, int & Nsteps_tot, int & Ncells_tot) {
         dyablo::ConsHydroState u;
-        dyablo::getConservativeState<ndim>(Uout, iCell_Uout, u);
-        
+        dyablo::getConservativeState<ndim>(Uout, iCell, u);
+
         // Initial state
-        real_t nH = (Uout.at(iCell_Uout, Irho) * XH * code_density).convert_to(mp_per_cc);
+        real_t nH = (Uout.at(iCell, Irho) * XH * code_density).convert_to(mp_per_cc);
         real_t log_nH = log10(nH);
-        
+
         // Subcycle cooling timesteps
         real_t t0_s = 0;
         PrimHydroState q = dyablo::consToPrim<ndim>(u, gamma0);
-        
+
+        int steps = 0;
         while (t0_s < dt_tot_s) {
           real_t T_over_mu = (q.p / q.rho * code_P_over_rho * gammam1 * mp_over_kb).convert_to(K);
           real_t p_cgs = (q.p * code_pressure).convert_to(erg_per_cc);
@@ -320,8 +327,24 @@ public:
           t0_s  += dt_sub_s;
 
           q.p = (p_cgs * erg_per_cc).convert_to(code_pressure);
+
+          steps++;
+
+          if (steps > 10'000) {
+            printf("WARNING: cooling did not converge in 10,000 steps (nH=%e, T/mu=%e, p=%e, dp/dt=%e, dt_sub=%e, t0=%e, dt_tot=%e)\n", nH, T_over_mu, p_cgs, dp_dt, dt_sub_s, t0_s, dt_tot_s);
+            break;
+          }
+
+          Nsteps_tot++;
         }
-    });
+        Ncells_tot++;
+
+        u = dyablo::primToCons<ndim>(q, gamma0);
+        dyablo::setConservativeState<ndim>(Uout, iCell, u);
+    }, Nsteps_tot, Ncells_tot);
+
+    std::cout << "Ncells = " << Ncells_tot << ", Nsteps = " << Nsteps_tot
+    << ", Nsteps/Ncells = " << (real_t)Nsteps_tot / Ncells_tot << std::endl;
 
     timers.get("Cooling simple").stop();
   }
