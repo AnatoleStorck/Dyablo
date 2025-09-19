@@ -23,6 +23,16 @@ namespace dyablo {
     return left;
   }
 
+  KOKKOS_INLINE_FUNCTION
+  size_t find_regular_grid( const Kokkos::View<const real_t*> arr, const real_t value, const size_t N ) {
+    real_t d = arr(1) - arr(0);
+    if (value <= arr(0)) return 0;
+    if (value >= arr(N-1)) return N-2;
+    size_t i = (size_t)((value - arr(0)) / d);
+    if (i >= N-1) i = N-2;
+    return i;
+  }
+
   /***
    * @brief Get the index of the value in the axes
    *
@@ -65,38 +75,48 @@ namespace dyablo {
   constexpr real_t kB = Units::KBOLTZ().convert_to(Units::erg() / Units::K());
 
   struct Table2DQuadT {
-    Kokkos::View<const real_t*> log_nH_grid;  // length NH_points
-    Kokkos::View<const real_t*> T_grid;   // length NT_points
-    Kokkos::View<const real_t**> values;  // shape (NH_points, NT_points)
+    Kokkos::View<real_t*> log_nH_grid;  // length NH_points
+    Kokkos::View<real_t*> log_T_grid;   // length NT_points
+    Kokkos::View<real_t*> T_grid;       // length NT_points
+    Kokkos::View<real_t**> values;      // shape (NH_points, NT_points)
     size_t NH_points;
     size_t NT_points;
 
     Table2DQuadT() = default;
-    Table2DQuadT(Kokkos::View<const real_t*> nH_grid_,
-                 Kokkos::View<const real_t*> T_grid_,
-                 Kokkos::View<const real_t**> values_)
-      : log_nH_grid(nH_grid_), T_grid(T_grid_), values(values_), NH_points(nH_grid_.extent(0)), NT_points(T_grid_.extent(0)) {}
+    Table2DQuadT(Kokkos::View<real_t*> nH_grid_,
+                 Kokkos::View<real_t*> T_grid_,
+                 Kokkos::View<real_t**> values_)
+      : log_nH_grid(nH_grid_), T_grid(T_grid_), values(values_), NH_points(nH_grid_.extent(0)), NT_points(T_grid_.extent(0)) {
+        // precompute log_T_grid
+        Kokkos::View<real_t*> log_T_grid("log_T_grid", NT_points);
+        auto log_T_grid_host = Kokkos::create_mirror_view(log_T_grid);
+        auto T_grid_host = Kokkos::create_mirror_view(this->T_grid);
+        Kokkos::deep_copy(T_grid_host, this->T_grid);
+
+        for (size_t j = 0; j < NT_points; ++j) {
+          log_T_grid_host(j) = log10(T_grid_host(j));
+        }
+        Kokkos::deep_copy(log_T_grid, log_T_grid_host);
+        this->log_T_grid = log_T_grid;
+      }
 
     KOKKOS_INLINE_FUNCTION
     size_t find_nH_cell(real_t log_nH) const {
       if (log_nH <= log_nH_grid(0))           return 0;
       if (log_nH >= log_nH_grid(NH_points-1)) return NH_points-2;
 
-      size_t j = bisect(log_nH_grid, log_nH, 0, NH_points-1);
-      if (log_nH < log_nH_grid(j)) printf("Error in find_nH_cell LEFT\n");
-      if (log_nH > log_nH_grid(j+1)) printf("Error in find_nH_cell RIGHT\n");
+      size_t j = find_regular_grid(log_nH_grid, log_nH, NH_points);
+
       return j;
     }
 
     KOKKOS_INLINE_FUNCTION
-    void find_T_quad(const real_t T, size_t &j0, size_t &j1, size_t &j2) const {
-      if (T <= T_grid(1)) { j0 = 0; j1 = 1; j2 = 2; return; }
-      if (T >= T_grid(NT_points-2)) { j0 = NT_points-3; j1 = NT_points-2; j2 = NT_points-1; return; }
+    void find_T_quad(const real_t log_T, size_t &j0, size_t &j1, size_t &j2) const {
+      if (log_T <= log_T_grid(1)) { j0 = 0; j1 = 1; j2 = 2; return; }
+      if (log_T >= log_T_grid(NT_points-2)) { j0 = NT_points-3; j1 = NT_points-2; j2 = NT_points-1; return; }
 
-      size_t j = bisect(T_grid, T, 0, NT_points-1);
+      size_t j = find_regular_grid(log_T_grid, log_T, NT_points);
 
-      if (T < T_grid(j)) printf("Error in find_T_quad LEFT\n");
-      if (T > T_grid(j+1)) printf("Error in find_T_quad RIGHT\n");
       if (j == 0) j = 1;
       if (j >= NT_points-1) j = NT_points-2;
       j0 = j - 1; j1 = j; j2 = j + 1;
@@ -140,11 +160,11 @@ namespace dyablo {
     }
 
     KOKKOS_INLINE_FUNCTION
-    real_t interp(real_t log_nH, real_t T) const {
+    real_t interp(real_t log_nH, real_t T, real_t log_T) const {
       size_t i0 = find_nH_cell(log_nH);
       size_t i1 = i0 + 1;
       size_t j0, j1, j2;
-      find_T_quad(T, j0, j1, j2);
+      find_T_quad(log_T, j0, j1, j2);
 
       real_t x0 = T_grid(j0),      x1  = T_grid(j1),     x2  = T_grid(j2);
       real_t f00 = values(i0, j0), f01 = values(i0, j1), f02 = values(i0, j2);
@@ -161,11 +181,11 @@ namespace dyablo {
     }
 
     KOKKOS_INLINE_FUNCTION
-    real_t dFdT(real_t log_nH, real_t T) const {
+    real_t dFdT(real_t log_nH, real_t T, real_t log_T) const {
       size_t i0 = find_nH_cell(log_nH);
       size_t i1 = i0 + 1;
       size_t j0, j1, j2;
-      find_T_quad(T, j0, j1, j2);
+      find_T_quad(log_T, j0, j1, j2);
 
       real_t x0 = T_grid(j0),      x1  = T_grid(j1),     x2  = T_grid(j2);
       real_t f00 = values(i0, j0), f01 = values(i0, j1), f02 = values(i0, j2);
@@ -182,18 +202,22 @@ namespace dyablo {
     }
   };
 
+  /* Jacobian for the transformation
+        d(T/µ) / dT ~ 1/µ.
+      More precisely, d(T/µ)/dT = (µ - T dµ/dT) / µ²
+  */
   KOKKOS_INLINE_FUNCTION
   real_t compute_A(real_t T, real_t mu, real_t dmu_dT) {
     return (mu - T * dmu_dT) / (mu * mu);
   }
 
   KOKKOS_INLINE_FUNCTION
-  real_t compute_f(const real_t T, const real_t nH, const real_t log_nH,
+  real_t compute_f(const real_t T, const real_t log_T, const real_t nH, const real_t log_nH,
                    const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab) {
-    real_t H   = Htab.interp(log_nH, T);
-    real_t C   = Ctab.interp(log_nH, T);
-    real_t mu  = Mutab.interp(log_nH, T);
-    real_t dmu = Mutab.dFdT(log_nH, T);
+    real_t H   = Htab.interp(log_nH, T, log_T);
+    real_t C   = Ctab.interp(log_nH, T, log_T);
+    real_t mu  = Mutab.interp(log_nH, T, log_T);
+    real_t dmu = Mutab.dFdT(log_nH, T, log_T);
 
     real_t A = compute_A(T, mu, dmu);
     real_t S = 2.0 / (3.0 * kB) * (H - C) * nH;
@@ -201,22 +225,22 @@ namespace dyablo {
   }
 
   KOKKOS_INLINE_FUNCTION
-  std::tuple<real_t, real_t> compute_J(const real_t T, const real_t nH, const real_t log_nH,
+  std::tuple<real_t, real_t> compute_J(const real_t T, const real_t log_T, const real_t nH, const real_t log_nH,
                                        const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab) {
-    real_t H   = Htab.interp(log_nH, T);
-    real_t C   = Ctab.interp(log_nH, T);
-    real_t mu  = Mutab.interp(log_nH, T);
-    real_t dmu = Mutab.dFdT(log_nH, T);
+    real_t H   = Htab.interp(log_nH, T, log_T);
+    real_t C   = Ctab.interp(log_nH, T, log_T);
+    real_t mu  = Mutab.interp(log_nH, T, log_T);
+    real_t dmu = Mutab.dFdT(log_nH, T, log_T);
 
     real_t A = compute_A(T, mu, dmu);
     real_t prefac = 2 * nH / (3 * kB);
     real_t S  = prefac * (H - C);
-    real_t St = prefac * (Htab.dFdT(log_nH, T) - Ctab.dFdT(log_nH, T));
+    real_t St = prefac * (Htab.dFdT(log_nH, T, log_T) - Ctab.dFdT(log_nH, T, log_T));
 
     // approximate A_T with finite difference (safe fallback)
     real_t eps = 1e-4 * (T > 0 ? T : 1.0);
-    real_t mu_p  = Mutab.interp(log_nH, T + eps);
-    real_t dmu_p = Mutab.dFdT(log_nH, T + eps);
+    real_t mu_p  = Mutab.interp(log_nH, T + eps, log_T);
+    real_t dmu_p = Mutab.dFdT(log_nH, T + eps, log_T);
     real_t A_p   = compute_A(T + eps, mu_p, dmu_p);
     real_t At    = (A_p - A) / eps;
 
@@ -232,17 +256,19 @@ namespace dyablo {
     constexpr real_t d31 = - (4 + sqrt2) / (2 + sqrt2);
     constexpr real_t d32 = (6 + sqrt2) / (2 + sqrt2);
 
-    const auto& [f, J] = compute_J(T, nH, log_nH, Htab, Ctab, Mutab);
+    const real_t log_T = log10(T);
+
+    const auto& [f, J] = compute_J(T, log_T, nH, log_nH, Htab, Ctab, Mutab);
 
     real_t denom = 1.0 / (1.0 - gamma * h * J);
 
     real_t k1 = f * denom;
 
     real_t T1 = T + h * k1 / 2;
-    real_t k2 = (compute_f(T1, nH, log_nH, Htab, Ctab, Mutab) - gamma * h * J * k1) * denom;
+    real_t k2 = (compute_f(T1, log10(T1), nH, log_nH, Htab, Ctab, Mutab) - gamma * h * J * k1) * denom;
 
     real_t T2 = T + h * k2;
-    real_t k3 = (compute_f(T2, nH, log_nH, Htab, Ctab, Mutab) - d31 * h * J * k1 - d32 * h * J * k2) * denom;
+    real_t k3 = (compute_f(T2, log10(T2), nH, log_nH, Htab, Ctab, Mutab) - d31 * h * J * k1 - d32 * h * J * k2) * denom;
 
     T += h / 6 * (k1 + 4 * k2 + k3);
     err_est = FABS(h / 6 * (k1 - 2 * k2 + k3));
@@ -284,8 +310,9 @@ namespace dyablo {
     real_t tol = 1e-6;
     real_t T = T_over_mu; // initial guess
     for (int iter = 0; iter < max_iter; ++iter) {
-      real_t mu = mutab.interp(log_nH, T);
-      real_t dmu_dT = mutab.dFdT(log_nH, T);
+      real_t log_T = log10(T);
+      real_t mu = mutab.interp(log_nH, T, log_T);
+      real_t dmu_dT = mutab.dFdT(log_nH, T, log_T);
       real_t f = T / mu - T_over_mu;
       real_t df_dT = (mu - T * dmu_dT) / (mu * mu);
       real_t delta = -f / df_dT;
@@ -511,7 +538,7 @@ public:
         real_t Tend = evolve_rosenbrock(T, nH, log_nH, dt_tot_s, Htab, Ctab, mutab, dt_tot_s, Nsteps_tot);
 
         // Convert back to pressure
-        T_over_mu = Tend / mutab.interp(log_nH, Tend);
+        T_over_mu = Tend / mutab.interp(log_nH, Tend, log10(Tend));
         q.p = (T_over_mu * K * q.rho * code_density / mp_over_kb).convert_to(code_pressure);
 
         u = dyablo::primToCons<ndim>(q, gamma0);
