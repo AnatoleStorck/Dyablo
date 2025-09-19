@@ -500,15 +500,13 @@ public:
       KOKKOS_LAMBDA(const ForeachCell::CellIndex& iCell, int & Nsteps_tot, int & Ncells_tot) {
         dyablo::ConsHydroState u;
         dyablo::getConservativeState<ndim>(Uout, iCell, u);
-
-        // Initial state
-        real_t nH = (Uout.at(iCell, Irho) * XH * code_density).convert_to(mp_per_cc);
-        real_t log_nH = log10(nH);
-
-        // Subcycle cooling timesteps
         PrimHydroState q = dyablo::consToPrim<ndim>(u, gamma0);
 
-        // Find temperature
+        // Initial state
+        real_t nH = (q.rho * XH * code_density).convert_to(mp_per_cc);
+        real_t log_nH = log10(nH);
+
+        // Compute T/µ
         real_t T_over_mu = (q.p / q.rho * code_P_over_rho * mp_over_kb).convert_to(K);
 
         // Newton-Raphson to find T from T/µ
@@ -521,6 +519,7 @@ public:
         T_over_mu = Tend / mutab.interp(log_nH, Tend, log10(Tend));
         q.p = (T_over_mu * K * q.rho * code_density / mp_over_kb).convert_to(code_pressure);
 
+        // Update state
         u = dyablo::primToCons<ndim>(q, gamma0);
         dyablo::setConservativeState<ndim>(Uout, iCell, u);
         Ncells_tot ++;
