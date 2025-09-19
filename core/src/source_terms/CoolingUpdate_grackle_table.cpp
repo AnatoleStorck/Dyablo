@@ -11,7 +11,7 @@ namespace dyablo {
   namespace {
 
   KOKKOS_INLINE_FUNCTION
-  size_t bisect( const Kokkos::View<const double*> arr, const double value, size_t left, size_t right ) {
+  size_t bisect( const Kokkos::View<const real_t*> arr, const real_t value, size_t left, size_t right ) {
     while (left < right - 1) {
       size_t mid = (left + right) / 2;
       if (value < arr(mid)) {
@@ -62,23 +62,23 @@ namespace dyablo {
     Kokkos::View<real_t*> redshift;
   };
 
-  constexpr double kB = Units::KBOLTZ().convert_to(Units::erg() / Units::K());
+  constexpr real_t kB = Units::KBOLTZ().convert_to(Units::erg() / Units::K());
 
   struct Table2DQuadT {
-    Kokkos::View<const double*> log_nH_grid;  // length NH_points
-    Kokkos::View<const double*> T_grid;   // length NT_points
-    Kokkos::View<const double**> values;  // shape (NH_points, NT_points)
+    Kokkos::View<const real_t*> log_nH_grid;  // length NH_points
+    Kokkos::View<const real_t*> T_grid;   // length NT_points
+    Kokkos::View<const real_t**> values;  // shape (NH_points, NT_points)
     size_t NH_points;
     size_t NT_points;
 
     Table2DQuadT() = default;
-    Table2DQuadT(Kokkos::View<const double*> nH_grid_,
-                 Kokkos::View<const double*> T_grid_,
-                 Kokkos::View<const double**> values_)
+    Table2DQuadT(Kokkos::View<const real_t*> nH_grid_,
+                 Kokkos::View<const real_t*> T_grid_,
+                 Kokkos::View<const real_t**> values_)
       : log_nH_grid(nH_grid_), T_grid(T_grid_), values(values_), NH_points(nH_grid_.extent(0)), NT_points(T_grid_.extent(0)) {}
 
     KOKKOS_INLINE_FUNCTION
-    size_t find_nH_cell(double log_nH) const {
+    size_t find_nH_cell(real_t log_nH) const {
       if (log_nH <= log_nH_grid(0))           return 0;
       if (log_nH >= log_nH_grid(NH_points-1)) return NH_points-2;
 
@@ -89,171 +89,182 @@ namespace dyablo {
     }
 
     KOKKOS_INLINE_FUNCTION
-    void find_T_quad(double T, size_t &j0, size_t &j1, size_t &j2) const {
-      if (T <= T_grid(1)) { j0=0; j1=1; j2=2; return; }
-      if (T >= T_grid(NT_points-2)) { j0=NT_points-3; j1=NT_points-2; j2=NT_points-1; return; }
+    void find_T_quad(const real_t T, size_t &j0, size_t &j1, size_t &j2) const {
+      if (T <= T_grid(1)) { j0 = 0; j1 = 1; j2 = 2; return; }
+      if (T >= T_grid(NT_points-2)) { j0 = NT_points-3; j1 = NT_points-2; j2 = NT_points-1; return; }
 
       size_t j = bisect(T_grid, T, 0, NT_points-1);
 
       if (T < T_grid(j)) printf("Error in find_T_quad LEFT\n");
       if (T > T_grid(j+1)) printf("Error in find_T_quad RIGHT\n");
-      if (j==0) j=1;
-      if (j>=NT_points-1) j=NT_points-2;
-      j0=j-1; j1=j; j2=j+1;
+      if (j == 0) j = 1;
+      if (j >= NT_points-1) j = NT_points-2;
+      j0 = j - 1; j1 = j; j2 = j + 1;
     }
 
     KOKKOS_INLINE_FUNCTION
-    static double lagrange_eval(double x,
-                                double x0,double f0,
-                                double x1,double f1,
-                                double x2,double f2) {
-      double L0 = (x-x1)*(x-x2)/((x0-x1)*(x0-x2));
-      double L1 = (x-x0)*(x-x2)/((x1-x0)*(x1-x2));
-      double L2 = (x-x0)*(x-x1)/((x2-x0)*(x2-x1));
-      return f0*L0 + f1*L1 + f2*L2;
+    static real_t lagrange_eval(const real_t x,
+                                const real_t x0, const real_t f0,
+                                const real_t x1, const real_t f1,
+                                const real_t x2, const real_t f2) {
+      real_t x_x1 = x - x1,
+             x_x0 = x - x0,
+             x_x2 = x - x2,
+             x0_x1 = x0 - x1,
+             x0_x2 = x0 - x2,
+             x1_x2 = x1 - x2;
+      real_t L0 = (x_x1 * x_x2) / ( x0_x1 * x0_x2);
+      real_t L1 = (x_x0 * x_x2) / (-x0_x1 * x1_x2);
+      real_t L2 = (x_x0 * x_x1) / ( x0_x2 * x1_x2);
+      return f0 * L0 + f1 * L1 + f2 * L2;
     }
 
     KOKKOS_INLINE_FUNCTION
-    static double lagrange_deriv(double x,
-                                double x0,double f0,
-                                double x1,double f1,
-                                double x2,double f2) {
-      double denom0=(x0-x1)*(x0-x2);
-      double denom1=(x1-x0)*(x1-x2);
-      double denom2=(x2-x0)*(x2-x1);
-      double dL0=((x-x2)+(x-x1))/denom0;
-      double dL1=((x-x2)+(x-x0))/denom1;
-      double dL2=((x-x0)+(x-x1))/denom2;
-      return f0*dL0+f1*dL1+f2*dL2;
+    static real_t lagrange_deriv(const real_t x,
+                                 const real_t x0, const real_t f0,
+                                 const real_t x1, const real_t f1,
+                                 const real_t x2, const real_t f2) {
+      real_t x_x0 = (x - x0),
+             x_x1 = (x - x1),
+             x_x2 = (x - x2),
+             x0_x1 = (x0 - x1),
+             x0_x2 = (x0 - x2),
+             x1_x2 = (x1 - x2);
+      real_t denom0 = +x0_x1 * x0_x2;
+      real_t denom1 = -x0_x1 * x1_x2;
+      real_t denom2 =  x0_x2 * x1_x2;
+      real_t dL0 = (x_x2 + x_x1) / denom0;
+      real_t dL1 = (x_x2 + x_x0) / denom1;
+      real_t dL2 = (x_x0 + x_x1) / denom2;
+      return f0 * dL0 + f1 * dL1 + f2 * dL2;
     }
 
     KOKKOS_INLINE_FUNCTION
-    double interp(double log_nH, double T) const {
-      size_t i0=find_nH_cell(log_nH);
-      size_t i1=i0+1;
-      size_t j0,j1,j2; find_T_quad(T,j0,j1,j2);
+    real_t interp(real_t log_nH, real_t T) const {
+      size_t i0 = find_nH_cell(log_nH);
+      size_t i1 = i0 + 1;
+      size_t j0, j1, j2;
+      find_T_quad(T, j0, j1, j2);
 
-      double x0=T_grid(j0), x1=T_grid(j1), x2=T_grid(j2);
-      double f00=values(i0,j0), f01=values(i0,j1), f02=values(i0,j2);
-      double f10=values(i1,j0), f11=values(i1,j1), f12=values(i1,j2);
+      real_t x0 = T_grid(j0),      x1  = T_grid(j1),     x2  = T_grid(j2);
+      real_t f00 = values(i0, j0), f01 = values(i0, j1), f02 = values(i0, j2);
+      real_t f10 = values(i1, j0), f11 = values(i1, j1), f12 = values(i1, j2);
 
-      double val0=lagrange_eval(T,x0,f00,x1,f01,x2,f02);
-      double val1=lagrange_eval(T,x0,f10,x1,f11,x2,f12);
+      real_t val0 = lagrange_eval(T, x0, f00, x1, f01, x2, f02);
+      real_t val1 = lagrange_eval(T, x0, f10, x1, f11, x2, f12);
 
-      double log_nH0=log_nH_grid(i0), log_nH1=log_nH_grid(i1);
-      double w=(log_nH-log_nH0)/(log_nH1-log_nH0+1e-300);
-      if (w<0) w=0;
-      if (w>1) w=1;
-      return (1-w)*val0 + w*val1;
+      real_t log_nH0 = log_nH_grid(i0), log_nH1 = log_nH_grid(i1);
+      real_t w = (log_nH - log_nH0) / (log_nH1 - log_nH0 + 1e-300);
+      if (w < 0) w = 0;
+      if (w > 1) w = 1;
+      return (1 - w) * val0 + w * val1;
     }
 
     KOKKOS_INLINE_FUNCTION
-    double dFdT(double log_nH, double T) const {
-      size_t i0=find_nH_cell(log_nH);
-      size_t i1=i0+1;
-      size_t j0,j1,j2; find_T_quad(T,j0,j1,j2);
+    real_t dFdT(real_t log_nH, real_t T) const {
+      size_t i0 = find_nH_cell(log_nH);
+      size_t i1 = i0 + 1;
+      size_t j0, j1, j2;
+      find_T_quad(T, j0, j1, j2);
 
-      double x0=T_grid(j0), x1=T_grid(j1), x2=T_grid(j2);
-      double f00=values(i0,j0), f01=values(i0,j1), f02=values(i0,j2);
-      double f10=values(i1,j0), f11=values(i1,j1), f12=values(i1,j2);
+      real_t x0 = T_grid(j0),      x1  = T_grid(j1),     x2  = T_grid(j2);
+      real_t f00 = values(i0, j0), f01 = values(i0, j1), f02 = values(i0, j2);
+      real_t f10 = values(i1, j0), f11 = values(i1, j1), f12 = values(i1, j2);
 
-      double d0=lagrange_deriv(T,x0,f00,x1,f01,x2,f02);
-      double d1=lagrange_deriv(T,x0,f10,x1,f11,x2,f12);
+      real_t d0 = lagrange_deriv(T, x0, f00, x1, f01, x2, f02);
+      real_t d1 = lagrange_deriv(T, x0, f10, x1, f11, x2, f12);
 
-      double log_nH0=log_nH_grid(i0), log_nH1=log_nH_grid(i1);
-      double w=(log_nH-log_nH0)/(log_nH1-log_nH0+1e-300);
-      if (w<0) w=0;
-      if (w>1) w=1;
-      return (1-w)*d0 + w*d1;
+      real_t log_nH0 = log_nH_grid(i0), log_nH1 = log_nH_grid(i1);
+      real_t w = (log_nH - log_nH0) / (log_nH1 - log_nH0 + 1e-300);
+      if (w < 0) w = 0;
+      if (w > 1) w = 1;
+      return (1 - w) * d0 + w * d1;
     }
   };
 
   KOKKOS_INLINE_FUNCTION
-  double compute_A(double T, double mu, double dmu_dT) {
+  real_t compute_A(real_t T, real_t mu, real_t dmu_dT) {
     return (mu - T * dmu_dT) / (mu * mu);
   }
 
   KOKKOS_INLINE_FUNCTION
-  double compute_f(double T, double nH,
-                  const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab) {
-    double log_nH = log10(nH);
-    double H   = Htab.interp(log_nH, T);
-    double C   = Ctab.interp(log_nH, T);
-    double mu  = Mutab.interp(log_nH, T);
-    double dmu = Mutab.dFdT(log_nH, T);
+  real_t compute_f(const real_t T, const real_t nH, const real_t log_nH,
+                   const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab) {
+    real_t H   = Htab.interp(log_nH, T);
+    real_t C   = Ctab.interp(log_nH, T);
+    real_t mu  = Mutab.interp(log_nH, T);
+    real_t dmu = Mutab.dFdT(log_nH, T);
 
-    double A = compute_A(T, mu, dmu);
-    double S = 2.0 / (3.0 * kB) * (H - C) * nH;
+    real_t A = compute_A(T, mu, dmu);
+    real_t S = 2.0 / (3.0 * kB) * (H - C) * nH;
     return S / A;
   }
 
   KOKKOS_INLINE_FUNCTION
-  double compute_J(double T, double nH,
-                  const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab) {
-    double log_nH = log10(nH);
-    double H   = Htab.interp(log_nH, T);
-    double C   = Ctab.interp(log_nH, T);
-    double mu  = Mutab.interp(log_nH, T);
-    double dmu = Mutab.dFdT(log_nH, T);
+  std::tuple<real_t, real_t> compute_J(const real_t T, const real_t nH, const real_t log_nH,
+                                       const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab) {
+    real_t H   = Htab.interp(log_nH, T);
+    real_t C   = Ctab.interp(log_nH, T);
+    real_t mu  = Mutab.interp(log_nH, T);
+    real_t dmu = Mutab.dFdT(log_nH, T);
 
-    double A = compute_A(T, mu, dmu);
-    double prefac = 2 * nH / (3 * kB);
-    double S  = prefac * (H - C);
-    double St = prefac * (Htab.dFdT(log_nH, T) - Ctab.dFdT(log_nH, T));
+    real_t A = compute_A(T, mu, dmu);
+    real_t prefac = 2 * nH / (3 * kB);
+    real_t S  = prefac * (H - C);
+    real_t St = prefac * (Htab.dFdT(log_nH, T) - Ctab.dFdT(log_nH, T));
 
     // approximate A_T with finite difference (safe fallback)
-    double eps = 1e-4 * (T > 0 ? T : 1.0);
-    double mu_p  = Mutab.interp(log_nH, T + eps);
-    double dmu_p = Mutab.dFdT(log_nH, T + eps);
-    double A_p   = compute_A(T + eps, mu_p, dmu_p);
-    double At    = (A_p - A) / eps;
+    real_t eps = 1e-4 * (T > 0 ? T : 1.0);
+    real_t mu_p  = Mutab.interp(log_nH, T + eps);
+    real_t dmu_p = Mutab.dFdT(log_nH, T + eps);
+    real_t A_p   = compute_A(T + eps, mu_p, dmu_p);
+    real_t At    = (A_p - A) / eps;
 
-    return (St * A - S * At) / (A * A);
+    return std::make_tuple(S / A, (St * A - S * At) / (A * A));
   }
 
   KOKKOS_INLINE_FUNCTION
-  bool rosenbrock3_step(double &T, double nH, double h,
+  void rosenbrock3_step(real_t &T, const real_t nH, const real_t log_nH, const real_t h,
                         const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
-                        double &err_est) {
-    constexpr double sqrt2 = 1.4142135623730951;
-    constexpr double gamma = 1.0 / (2.0 + sqrt2);
-    constexpr double d31 = - (4 + sqrt2) / (2 + sqrt2);
-    constexpr double d32 = (6 + sqrt2) / (2 + sqrt2);
+                        real_t &err_est) {
+    constexpr real_t sqrt2 = 1.4142135623730951;
+    constexpr real_t gamma = 1.0 / (2.0 + sqrt2);
+    constexpr real_t d31 = - (4 + sqrt2) / (2 + sqrt2);
+    constexpr real_t d32 = (6 + sqrt2) / (2 + sqrt2);
 
-    double J = compute_J(T, nH, Htab, Ctab, Mutab);
+    const auto& [f, J] = compute_J(T, nH, log_nH, Htab, Ctab, Mutab);
 
-    double denom = 1.0 / (1.0 - gamma * h * J);
+    real_t denom = 1.0 / (1.0 - gamma * h * J);
 
-    double k1 = compute_f(T, nH, Htab, Ctab, Mutab) * denom;
+    real_t k1 = f * denom;
 
-    double T1 = T + h * k1 / 2;
-    double k2 = (compute_f(T1, nH, Htab, Ctab, Mutab) - gamma * h * J * k1) * denom;
+    real_t T1 = T + h * k1 / 2;
+    real_t k2 = (compute_f(T1, nH, log_nH, Htab, Ctab, Mutab) - gamma * h * J * k1) * denom;
 
-    double T2 = T + h * k2;
-    double k3 = (compute_f(T2, nH, Htab, Ctab, Mutab) - d31 * h * J * k1 - d32 * h * J * k2) * denom;
+    real_t T2 = T + h * k2;
+    real_t k3 = (compute_f(T2, nH, log_nH, Htab, Ctab, Mutab) - d31 * h * J * k1 - d32 * h * J * k2) * denom;
 
     T += h / 6 * (k1 + 4 * k2 + k3);
     err_est = FABS(h / 6 * (k1 - 2 * k2 + k3));
-    return true;
   }
 
   KOKKOS_INLINE_FUNCTION
-  double evolve_rosenbrock(double T0, double nH, double t_final,
-                          const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
-                          double dt_init, int &Nsteps, double tol=1e-3) {
-    double t = 0.0;
-    double T = T0;
-    double h = dt_init;
+  real_t evolve_rosenbrock(const real_t T0, const real_t nH, const real_t log_nH, const real_t t_final,
+                           const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
+                           const real_t dt_init, int &Nsteps, const real_t tol=1e-3) {
+    real_t t = 0.0;
+    real_t T = T0;
+    real_t h = dt_init;
 
     while (t < t_final) {
       if (t + h > t_final) h = t_final - t;
 
-      double T_save = T;
-      double err;
-      rosenbrock3_step(T, nH, h, Htab, Ctab, Mutab, err);
+      real_t T_save = T;
+      real_t err;
+      rosenbrock3_step(T, nH, log_nH, h, Htab, Ctab, Mutab, err);
 
-      double scale = fabs(T) + 1e-40;
-      double rel_err = err / scale;
+      real_t scale = fabs(T) + 1e-40;
+      real_t rel_err = err / scale;
 
       if (rel_err < tol) {
         t += h;
@@ -267,6 +278,7 @@ namespace dyablo {
     return T;
   }
 
+  KOKKOS_INLINE_FUNCTION
   real_t find_T(const real_t log_nH, const real_t T_over_mu, const Table2DQuadT& mutab){
     int max_iter = 20;
     real_t tol = 1e-6;
@@ -458,7 +470,6 @@ public:
 
     // ----------------------------------------------------------
     // Cooling timeloop
-
     Units::Time code_time = Units::code_units().getUnit(Units::s());
     const real_t dt_tot_s = (scalar_data.get<real_t>("dt") * code_time).convert_to(Units::s());
     real_t XH = Units::XH().convert_to(Units::one());
@@ -497,7 +508,7 @@ public:
         real_t T = find_T(log_nH, T_over_mu, mutab);
 
         // Do cooling timestep
-        double Tend = evolve_rosenbrock(T, nH, dt_tot_s, Htab, Ctab, mutab, dt_tot_s, Nsteps_tot);
+        real_t Tend = evolve_rosenbrock(T, nH, log_nH, dt_tot_s, Htab, Ctab, mutab, dt_tot_s, Nsteps_tot);
 
         // Convert back to pressure
         T_over_mu = Tend / mutab.interp(log_nH, Tend);
