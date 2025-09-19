@@ -72,8 +72,9 @@ public:
       Units::constant_to_code_units(Units::KBOLTZ() / Units::PROTON_MASS())
     ),
     rho_m([&configMap]() {
-      const auto H0 = configMap.getValue<real_t>("cosmology", "h", 0.7) * 100.0 * Units::km() / Units::s() / Units::Mpc();
-      const auto rhoc = 3 * H0 * H0 / (8 * M_PI * Units::NEWTON_G());
+      const auto H0 = configMap.getValue_in_code_unit<Inv_Time>("cosmology", "H0");
+      const auto four_pi_G = configMap.getValue_in_code_unit<real_t>( "gravity", "4_Pi_G" );
+      const auto rhoc = 3.0 * H0 * H0 /( 2 * four_pi_G);
       const auto omegam = configMap.getValue<real_t>("cosmology", "omegam", 0.3);
 
       // Set it to zero if not cosmological run
