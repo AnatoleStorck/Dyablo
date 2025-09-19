@@ -66,22 +66,25 @@ public:
     foreach_particle(foreach_cell.get_amr_mesh(), configMap),
     timers(timers),
     policy_params(Policy_Params::from_configMap(configMap)),
+    cosmology( configMap.getValue<bool>("cosmology", "enable", false) ),
     rho_threshold_physical( configMap.getValue_in_code_unit<Units::Density>("star_formation", "density_threshold", "10 proton_mass/cm**3") ),
     P_over_rho_threshold_physical(
       configMap.getValue_in_code_unit<Units::Temperature>("star_formation", "temperature_threshold", "1e4 K") *
       Units::constant_to_code_units(Units::KBOLTZ() / Units::PROTON_MASS())
     ),
-    rho_m([&configMap]() {
+    rho_m([&]() {
+      using Inv_Time = decltype(1 / Units::s());
+      using G_units = decltype(Units::NEWTON_G());
       const auto H0 = configMap.getValue_in_code_unit<Inv_Time>("cosmology", "H0");
-      const auto four_pi_G = configMap.getValue_in_code_unit<real_t>( "gravity", "4_Pi_G" );
-      const auto rhoc = 3.0 * H0 * H0 /( 2 * four_pi_G);
+      const auto four_pi_G = configMap.getValue_in_code_unit<G_units>( "gravity", "4_Pi_G" );
+      const auto rhoc = 3.0 * H0 * H0 /( 2 * four_pi_G );
       const auto omegam = configMap.getValue<real_t>("cosmology", "omegam", 0.3);
 
       // Set it to zero if not cosmological run
-      if( !configMap.getValue<bool>("cosmology", "enable", false) )
+      if( !cosmology )
         return 0.0;
       else
-        return Units::constant_to_code_units(rhoc * omegam);
+        return rhoc * omegam;
     }()),
     epsilon_star    ( configMap.getValue<real_t>("star_formation", "epsilon_star") ),
     seed            ( 100 ),
@@ -123,7 +126,7 @@ public:
     const real_t dt = scalar_data.get<real_t>("dt");
     const real_t aexp = scalar_data.hasValue<real_t>("aexp") ? scalar_data.get<real_t>("aexp") : 1;
 
-    const real_t time = scalar_data.hasValue<real_t>("time_physical") ?
+    const real_t time = cosmology ?
       scalar_data.get<real_t>("time_physical")
       : scalar_data.get<real_t>("time");
 
@@ -278,6 +281,8 @@ private:
   ForeachParticle foreach_particle;
   Timers& timers;
   Policy_Params policy_params;
+  bool cosmology;
+
   real_t rho_threshold_physical, P_over_rho_threshold_physical;
   real_t rho_m;
   real_t epsilon_star;
