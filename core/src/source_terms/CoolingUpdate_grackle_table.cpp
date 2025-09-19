@@ -202,26 +202,14 @@ namespace dyablo {
     }
   };
 
-  /* Jacobian for the transformation
-        d(T/µ) / dT ~ 1/µ.
-      More precisely, d(T/µ)/dT = (µ - T dµ/dT) / µ²
-  */
-  KOKKOS_INLINE_FUNCTION
-  real_t compute_A(real_t T, real_t mu, real_t dmu_dT) {
-    return (mu - T * dmu_dT) / (mu * mu);
-  }
-
   KOKKOS_INLINE_FUNCTION
   real_t compute_f(const real_t T, const real_t log_T, const real_t nH, const real_t log_nH,
                    const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab) {
     real_t H   = Htab.interp(log_nH, T, log_T);
     real_t C   = Ctab.interp(log_nH, T, log_T);
     real_t mu  = Mutab.interp(log_nH, T, log_T);
-    real_t dmu = Mutab.dFdT(log_nH, T, log_T);
 
-    real_t A = compute_A(T, mu, dmu);
-    real_t S = 2.0 / (3.0 * kB) * (H - C) * nH;
-    return S / A;
+    return 2 * mu * nH / (3 * kB) * (H - C);
   }
 
   KOKKOS_INLINE_FUNCTION
@@ -232,19 +220,11 @@ namespace dyablo {
     real_t mu  = Mutab.interp(log_nH, T, log_T);
     real_t dmu = Mutab.dFdT(log_nH, T, log_T);
 
-    real_t A = compute_A(T, mu, dmu);
-    real_t prefac = 2 * nH / (3 * kB);
+    real_t prefac = 2 * mu * nH / (3 * kB);
     real_t S  = prefac * (H - C);
-    real_t St = prefac * (Htab.dFdT(log_nH, T, log_T) - Ctab.dFdT(log_nH, T, log_T));
+    real_t St = prefac * (Htab.dFdT(log_nH, T, log_T) - Ctab.dFdT(log_nH, T, log_T)) + S * dmu / mu;
 
-    // approximate A_T with finite difference (safe fallback)
-    real_t eps = 1e-4 * (T > 0 ? T : 1.0);
-    real_t mu_p  = Mutab.interp(log_nH, T + eps, log_T);
-    real_t dmu_p = Mutab.dFdT(log_nH, T + eps, log_T);
-    real_t A_p   = compute_A(T + eps, mu_p, dmu_p);
-    real_t At    = (A_p - A) / eps;
-
-    return std::make_tuple(S / A, (St * A - S * At) / (A * A));
+    return { S, St };
   }
 
   KOKKOS_INLINE_FUNCTION
