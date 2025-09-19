@@ -375,7 +375,9 @@ public:
     hid_t aspace = H5Aget_space(attr_nH);
     H5Sget_simple_extent_dims(aspace, adims_nH, NULL);
     if (adims_nH[0] != dims[0])
-    throw std::runtime_error("Error reading cooling table: " + name + " Parameter1 size mismatch");
+    DYABLO_ASSERT_HOST_RELEASE(
+      adims_nH[0] == dims[0], "Error reading cooling table: " + name + " Parameter1 size mismatch"
+    )
 
     // Read "Parameter2" (array of redshifts)
     hid_t attr_redshift = H5Aopen(dataset, "Parameter2", H5P_DEFAULT);
@@ -383,8 +385,9 @@ public:
     hid_t atype_redshift = H5Aget_type(attr_redshift);
     aspace = H5Aget_space(attr_redshift);
     H5Sget_simple_extent_dims(aspace, adims_redshift, NULL);
-    if (adims_redshift[0] != dims[1])
-    throw std::runtime_error("Error reading cooling table: " + name + " Parameter2 size mismatch");
+    DYABLO_ASSERT_HOST_RELEASE(
+      adims_redshift[0] == dims[1], "Error reading cooling table: " + name + " Parameter2 size mismatch"
+    )
 
     // Read "Temperature" (array of temperatures)
     hid_t attr_temperature = H5Aopen(dataset, "Temperature", H5P_DEFAULT);
@@ -392,8 +395,9 @@ public:
     hid_t atype_temperature = H5Aget_type(attr_temperature);
     aspace = H5Aget_space(attr_temperature);
     H5Sget_simple_extent_dims(aspace, adims_temperature, NULL);
-    if (adims_temperature[0] != dims[2])
-    throw std::runtime_error("Error reading cooling table: " + name + " Parameter2 size mismatch");
+    DYABLO_ASSERT_HOST_RELEASE(
+      adims_temperature[0] == dims[2], "Error reading cooling table: " + name + " Parameter3 size mismatch"
+    )
 
     // Allocate memory
     GrackleTable table;
