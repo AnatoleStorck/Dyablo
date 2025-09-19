@@ -48,51 +48,6 @@ namespace dyablo {
     return {i, f};
   }
 
-  KOKKOS_INLINE_FUNCTION
-  real_t interpolate(
-    const Kokkos::View<real_t**> table,
-    const size_t i,
-    const size_t j,
-    const real_t fi,
-    const real_t fj
-  ) {
-    return (1 - fi) * (1 - fj) * table(i, j)
-         + (1 - fi) * fj * table(i, j+1)
-         + fi * (1 - fj) * table(i+1, j)
-         + fi * fj * table(i+1, j+1);
-  }
-
-  KOKKOS_INLINE_FUNCTION
-  std::tuple<size_t, real_t> solve_mu(
-    const Kokkos::View<real_t**> mu_table,
-    const Kokkos::View<real_t*> T_grid,
-    const real_t T_over_mu,
-    const size_t inH,
-    const real_t fnH
-  ) {
-    const size_t imax = T_grid.extent(0) - 1;
-
-    // Handle out-of-bounds (clamp to µ_min and µ_max)
-    real_t Tmu_low  = T_grid(0)    * mu_table(inH, 0);
-    real_t Tmu_high = T_grid(imax) * mu_table(inH, imax);
-
-    if (T_over_mu  <= Tmu_low) {
-      return {0,      0.};
-    } else if (T_over_mu >= Tmu_high) {
-      return {imax-1, 1.};
-    }
-    size_t i = 0;
-    for (i = 1; i <= imax; i++) {
-      Tmu_high = T_grid(i) * (
-        (1 - fnH) * mu_table(inH,   i) +
-        fnH       * mu_table(inH+1, i)
-      );
-      if (Tmu_low < T_over_mu && T_over_mu <= Tmu_high) break;
-      Tmu_low = Tmu_high;
-    }
-    return {i - 1, (T_over_mu - Tmu_low) / (Tmu_high - Tmu_low)};
-  }
-
   struct GrackleTable {
     Kokkos::View<real_t***, Kokkos::LayoutRight> data;
     Kokkos::View<real_t*> temperature;
@@ -103,38 +58,38 @@ namespace dyablo {
   constexpr double kB = Units::KBOLTZ().convert_to(Units::erg() / Units::K());
 
   struct Table2DQuadT {
-    Kokkos::View<const double*> nH_grid;  // length nH
-    Kokkos::View<const double*> T_grid;   // length nT
-    Kokkos::View<const double**> values;  // shape (nH, nT)
-    int nH;
-    int nT;
+    Kokkos::View<const double*> log_nH_grid;  // length NH_points
+    Kokkos::View<const double*> T_grid;   // length NT_points
+    Kokkos::View<const double**> values;  // shape (NH_points, NT_points)
+    int NH_points;
+    int NT_points;
 
     Table2DQuadT() = default;
     Table2DQuadT(Kokkos::View<const double*> nH_grid_,
-                Kokkos::View<const double*> T_grid_,
-                Kokkos::View<const double**> values_)
-      : nH_grid(nH_grid_), T_grid(T_grid_), values(values_), nH(nH_grid_.extent(0)), nT(T_grid_.extent(0)) {}
+                 Kokkos::View<const double*> T_grid_,
+                 Kokkos::View<const double**> values_)
+      : log_nH_grid(nH_grid_), T_grid(T_grid_), values(values_), NH_points(nH_grid_.extent(0)), NT_points(T_grid_.extent(0)) {}
 
     KOKKOS_INLINE_FUNCTION
-    int find_nH_cell(double nh) const {
-      if (nh <= nH_grid(0)) return 0;
-      if (nh >= nH_grid(nH-1)) return nH-2;
-      for (int i=0;i<nH-1;++i) {
-        if (nh < nH_grid(i+1)) return i;
+    int find_nH_cell(double log_nH) const {
+      if (log_nH <= log_nH_grid(0)) return 0;
+      if (log_nH >= log_nH_grid(NH_points-1)) return NH_points-2;
+      for (int i=0;i<NH_points-1;++i) {
+        if (log_nH < log_nH_grid(i+1)) return i;
       }
-      return nH-2;
+      return NH_points-2;
     }
 
     KOKKOS_INLINE_FUNCTION
     void find_T_quad(double T, int &j0, int &j1, int &j2) const {
       if (T <= T_grid(1)) { j0=0; j1=1; j2=2; return; }
-      if (T >= T_grid(nT-2)) { j0=nT-3; j1=nT-2; j2=nT-1; return; }
+      if (T >= T_grid(NT_points-2)) { j0=NT_points-3; j1=NT_points-2; j2=NT_points-1; return; }
       int j=0;
-      for (int jj=0;jj<nT-1;++jj) {
+      for (int jj=0;jj<NT_points-1;++jj) {
         if (T < T_grid(jj+1)) { j=jj; break; }
       }
       if (j==0) j=1;
-      if (j>=nT-1) j=nT-2;
+      if (j>=NT_points-1) j=NT_points-2;
       j0=j-1; j1=j; j2=j+1;
     }
 
@@ -164,8 +119,8 @@ namespace dyablo {
     }
 
     KOKKOS_INLINE_FUNCTION
-    double interp(double nh, double T) const {
-      int i0=find_nH_cell(nh);
+    double interp(double log_nH, double T) const {
+      int i0=find_nH_cell(log_nH);
       int i1=i0+1;
       int j0,j1,j2; find_T_quad(T,j0,j1,j2);
 
@@ -176,16 +131,16 @@ namespace dyablo {
       double val0=lagrange_eval(T,x0,f00,x1,f01,x2,f02);
       double val1=lagrange_eval(T,x0,f10,x1,f11,x2,f12);
 
-      double nh0=nH_grid(i0), nh1=nH_grid(i1);
-      double w=(nh-nh0)/(nh1-nh0+1e-300);
+      double log_nH0=log_nH_grid(i0), log_nH1=log_nH_grid(i1);
+      double w=(log_nH-log_nH0)/(log_nH1-log_nH0+1e-300);
       if (w<0) w=0;
       if (w>1) w=1;
       return (1-w)*val0 + w*val1;
     }
 
     KOKKOS_INLINE_FUNCTION
-    double dFdT(double nh, double T) const {
-      int i0=find_nH_cell(nh);
+    double dFdT(double log_nH, double T) const {
+      int i0=find_nH_cell(log_nH);
       int i1=i0+1;
       int j0,j1,j2; find_T_quad(T,j0,j1,j2);
 
@@ -196,8 +151,8 @@ namespace dyablo {
       double d0=lagrange_deriv(T,x0,f00,x1,f01,x2,f02);
       double d1=lagrange_deriv(T,x0,f10,x1,f11,x2,f12);
 
-      double nh0=nH_grid(i0), nh1=nH_grid(i1);
-      double w=(nh-nh0)/(nh1-nh0+1e-300);
+      double log_nH0=log_nH_grid(i0), log_nH1=log_nH_grid(i1);
+      double w=(log_nH-log_nH0)/(log_nH1-log_nH0+1e-300);
       if (w<0) w=0;
       if (w>1) w=1;
       return (1-w)*d0 + w*d1;
@@ -216,11 +171,11 @@ namespace dyablo {
     double H   = Htab.interp(log_nH, T);
     double C   = Ctab.interp(log_nH, T);
     double mu  = Mutab.interp(log_nH, T);
-    // double dmu = Mutab.dFdT(log_nH, T);
+    double dmu = Mutab.dFdT(log_nH, T);
 
-    // double A = compute_A(T, mu, dmu);
-    double S = (2.0 * mu / (3.0 * kB * nH)) * (H - C);
-    return S; //  / A;
+    double A = compute_A(T, mu, dmu);
+    double S = 2.0 / (3.0 * kB) * (H - C) * nH;
+    return S / A;
   }
 
   KOKKOS_INLINE_FUNCTION
@@ -230,21 +185,21 @@ namespace dyablo {
     double H   = Htab.interp(log_nH, T);
     double C   = Ctab.interp(log_nH, T);
     double mu  = Mutab.interp(log_nH, T);
-    // double dmu = Mutab.dFdT(log_nH, T);
+    double dmu = Mutab.dFdT(log_nH, T);
 
-    // double A = compute_A(T, mu, dmu);
-    double prefac = 2 * mu / (3 * kB * nH);
+    double A = compute_A(T, mu, dmu);
+    double prefac = 2 * nH / (3 * kB);
     double S  = prefac * (H - C);
     double St = prefac * (Htab.dFdT(log_nH, T) - Ctab.dFdT(log_nH, T));
 
     // approximate A_T with finite difference (safe fallback)
-    // double eps = 1e-2 * (T > 0 ? T : 1.0);
-    // double mu_p  = Mutab.interp(log_nH, T + eps);
-    // double dmu_p = Mutab.dFdT(log_nH, T + eps);
-    // double A_p   = compute_A(T + eps, mu_p, dmu_p);
-    // double At    = (A_p - A) / eps;
+    double eps = 1e-4 * (T > 0 ? T : 1.0);
+    double mu_p  = Mutab.interp(log_nH, T + eps);
+    double dmu_p = Mutab.dFdT(log_nH, T + eps);
+    double A_p   = compute_A(T + eps, mu_p, dmu_p);
+    double At    = (A_p - A) / eps;
 
-    return St; // * A - S * At) / (A * A);
+    return (St * A - S * At) / (A * A);
   }
 
   KOKKOS_INLINE_FUNCTION
@@ -299,6 +254,22 @@ namespace dyablo {
         h *= fmax(0.1, 0.9 * pow(tol / (rel_err + 1e-16), 0.5));
       }
       Nsteps++;
+    }
+    return T;
+  }
+
+  real_t find_T(const real_t log_nH, const real_t T_over_mu, const Table2DQuadT& mutab){
+    int max_iter = 20;
+    real_t tol = 1e-6;
+    real_t T = T_over_mu; // initial guess
+    for (int iter = 0; iter < max_iter; ++iter) {
+      real_t mu = mutab.interp(log_nH, T);
+      real_t dmu_dT = mutab.dFdT(log_nH, T);
+      real_t f = T / mu - T_over_mu;
+      real_t df_dT = (mu - T * dmu_dT) / (mu * mu);
+      real_t delta = -f / df_dT;
+      T += delta;
+      if (fabs(delta / T) < tol) break;
     }
     return T;
   }
@@ -466,9 +437,8 @@ public:
       Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0}, {CTable.data.extent(0), CTable.data.extent(2)}),
       KOKKOS_LAMBDA(const size_t i, const size_t j) {
         const auto& [iz, fz] = get_index(CTable.redshift, redshift);
-        const real_t nH2 = pow(10, 2 * CTable.log_nH(i));
-        Cz(i,j)  = ((1 - fz) * CTable.data(i, iz, j) + fz * CTable.data(i, iz+1, j)) * nH2;
-        Hz(i,j)  = ((1 - fz) * HTable.data(i, iz, j) + fz * HTable.data(i, iz+1, j)) * nH2;
+        Cz(i,j)  = (1 - fz) * CTable.data(i, iz, j) + fz * CTable.data(i, iz+1, j);
+        Hz(i,j)  = (1 - fz) * HTable.data(i, iz, j) + fz * HTable.data(i, iz+1, j);
         muz(i,j) = (1 - fz) * muTable.data(i, iz, j) + fz * muTable.data(i, iz+1, j);
     });
 
@@ -485,7 +455,6 @@ public:
     real_t XH = Units::XH().convert_to(Units::one());
 
     real_t gamma0 = this->gamma0;
-    real_t gammam1 = gamma0 - 1;
 
     auto mp_per_cc     = Units::PROTON_MASS() / Units::cm3();
     auto mp_over_kb    = Units::PROTON_MASS() / Units::KBOLTZ();
@@ -514,16 +483,15 @@ public:
 
         // Find temperature
         real_t T_over_mu = (q.p / q.rho * code_P_over_rho * mp_over_kb).convert_to(K);
-        const auto& [inH, fnH] = get_index(CTable.log_nH, log_nH);
-        const auto& [iT, fT] = solve_mu(muz, muTable.temperature, T_over_mu, inH, fnH);
-        real_t T = T_over_mu * interpolate(muz, inH, iT, fnH, fT);
+
+        // Newton-Raphson to find T from T/µ
+        real_t T = find_T(log_nH, T_over_mu, mutab);
 
         // Do cooling timestep
         double Tend = evolve_rosenbrock(T, nH, dt_tot_s, Htab, Ctab, mutab, dt_tot_s, Nsteps_tot);
-        const auto & [iTend, fTend] = get_index(muTable.temperature, Tend);
 
         // Convert back to pressure
-        T_over_mu = Tend / interpolate(muz, inH, iTend, fnH, fTend);
+        T_over_mu = Tend / mutab.interp(log_nH, Tend);
         q.p = (T_over_mu * K * q.rho * code_density / mp_over_kb).convert_to(code_pressure);
 
         u = dyablo::primToCons<ndim>(q, gamma0);
