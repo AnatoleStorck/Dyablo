@@ -485,13 +485,9 @@ public:
 
     auto mp_per_cc     = Units::PROTON_MASS() / Units::cm3();
     auto mp_over_kb    = Units::PROTON_MASS() / Units::KBOLTZ();
-    auto code_density  = Units::code_units().getUnit(Units::kg()/Units::m3());
-    code_density       = code_density * Units::supercomoving_to_physical<decltype(code_density)>(1.0, aexp);
-    auto code_pressure = Units::code_units().getUnit(Units::Pa());
-    code_pressure      = code_pressure * Units::supercomoving_to_physical<decltype(code_pressure)>(1.0, aexp);
-    auto code_P_over_rho = code_pressure / code_density;
-
     auto K = Units::Kelvin();
+    auto code_density  = Units::code_units().getUnit<Units::Density>();
+    auto code_pressure = Units::code_units().getUnit<Units::Pressure>();
 
     int Nsteps_tot = 0;
     int Ncells_tot = 0;
@@ -503,11 +499,13 @@ public:
         PrimHydroState q = dyablo::consToPrim<ndim>(u, gamma0);
 
         // Initial state
-        real_t nH = (q.rho * XH * code_density).convert_to(mp_per_cc);
+        auto rho_physical = Units::supercomoving_to_physical<Units::Density>(q.rho, aexp) * code_density;
+        auto P_physical = Units::supercomoving_to_physical<Units::Pressure>(q.p, aexp) * code_pressure;
+        real_t nH = (rho_physical * XH).convert_to(mp_per_cc);
         real_t log_nH = log10(nH);
 
         // Compute T/µ
-        real_t T_over_mu = (q.p / q.rho * code_P_over_rho * mp_over_kb).convert_to(K);
+        real_t T_over_mu = (P_physical / rho_physical * mp_over_kb).convert_to(K);
 
         // Newton-Raphson to find T from T/µ
         real_t T = find_T(log_nH, T_over_mu, mutab);
@@ -515,9 +513,13 @@ public:
         // Do cooling timestep
         real_t Tend = evolve_rosenbrock(T, nH, log_nH, dt_tot_s, Htab, Ctab, mutab, dt_tot_s, Nsteps_tot);
 
+        if ((iCell.iOct.iOct == 0) && iCell.i == 0 && iCell.j == 0 && iCell.k == 0)
+          printf("T = %e, nH = %e K\n", T, nH);
+
         // Convert back to pressure
         T_over_mu = Tend / mutab.interp(log_nH, Tend, log10(Tend));
-        q.p = (T_over_mu * K * q.rho * code_density / mp_over_kb).convert_to(code_pressure);
+        P_physical = T_over_mu * K * rho_physical / mp_over_kb;
+        q.p = Units::physical_to_supercomoving<Units::Pressure>(P_physical.convert_to(code_pressure), aexp);
 
         // Update state
         u = dyablo::primToCons<ndim>(q, gamma0);
@@ -537,7 +539,7 @@ public:
     int ndim = foreach_cell.getDim();
 
     if (ndim == 2)
-      update_aux<2>(U, scalar_data);
+      throw "2D not implemented";
     else
       update_aux<3>(U, scalar_data);
   }
