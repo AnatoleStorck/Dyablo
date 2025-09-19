@@ -30,7 +30,7 @@ public:
 
   void update(UserData& U, ScalarSimulationData& scalar_data)
   {
-    const real_t t = scalar_data.get<real_t>("time");
+    const real_t t = scalar_data.hasValue("time_physical") ? scalar_data.get<real_t>("time_physical") : scalar_data.get<real_t>("time");
     const real_t dt = scalar_data.get<real_t>("dt");
 
     enum VarIndex {
