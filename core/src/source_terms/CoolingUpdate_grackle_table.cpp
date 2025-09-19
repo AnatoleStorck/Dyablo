@@ -10,6 +10,19 @@ namespace dyablo {
 
   namespace {
 
+  KOKKOS_INLINE_FUNCTION
+  size_t bisect( const Kokkos::View<const double*> arr, const double value, size_t left, size_t right ) {
+    while (left < right - 1) {
+      size_t mid = (left + right) / 2;
+      if (value < arr(mid)) {
+        right = mid;
+      } else {
+        left = mid;
+      }
+    }
+    return left;
+  }
+
   /***
    * @brief Get the index of the value in the axes
    *
@@ -19,10 +32,10 @@ namespace dyablo {
    * (i.e. (value - axes(i)) / (axes(i+1) - axes(i)) )
    */
   KOKKOS_INLINE_FUNCTION
-  std::tuple<size_t, real_t> get_index(const Kokkos::View<real_t*>& axes, const real_t value)
+  std::tuple<size_t, real_t> get_index(const Kokkos::View<const real_t*>& axes, const real_t value)
   {
     size_t imax = axes.extent(0) - 1;
-    size_t i = 0, j = imax;
+    size_t i = 0;
     real_t f;
     // Handle out-of-bounds
     if (value < axes(0)) {
@@ -33,14 +46,8 @@ namespace dyablo {
       f = 1;
     } else {
       // Binary search, stop when j == i + 1
-      while (j > i + 1) {
-        size_t m = (i + j) / 2;
-        if (value < axes(m)) {
-          j = m;
-        } else {
-          i = m;
-        }
-      }
+      size_t i = bisect(axes, value, 0, imax);
+
       // Fractional distance
       f = (value - axes(i)) / (axes(i+1) - axes(i));
       f = FMIN(1, FMAX(0, f));
@@ -61,8 +68,8 @@ namespace dyablo {
     Kokkos::View<const double*> log_nH_grid;  // length NH_points
     Kokkos::View<const double*> T_grid;   // length NT_points
     Kokkos::View<const double**> values;  // shape (NH_points, NT_points)
-    int NH_points;
-    int NT_points;
+    size_t NH_points;
+    size_t NT_points;
 
     Table2DQuadT() = default;
     Table2DQuadT(Kokkos::View<const double*> nH_grid_,
@@ -71,23 +78,25 @@ namespace dyablo {
       : log_nH_grid(nH_grid_), T_grid(T_grid_), values(values_), NH_points(nH_grid_.extent(0)), NT_points(T_grid_.extent(0)) {}
 
     KOKKOS_INLINE_FUNCTION
-    int find_nH_cell(double log_nH) const {
-      if (log_nH <= log_nH_grid(0)) return 0;
+    size_t find_nH_cell(double log_nH) const {
+      if (log_nH <= log_nH_grid(0))           return 0;
       if (log_nH >= log_nH_grid(NH_points-1)) return NH_points-2;
-      for (int i=0;i<NH_points-1;++i) {
-        if (log_nH < log_nH_grid(i+1)) return i;
-      }
-      return NH_points-2;
+
+      size_t j = bisect(log_nH_grid, log_nH, 0, NH_points-1);
+      if (log_nH < log_nH_grid(j)) printf("Error in find_nH_cell LEFT\n");
+      if (log_nH > log_nH_grid(j+1)) printf("Error in find_nH_cell RIGHT\n");
+      return j;
     }
 
     KOKKOS_INLINE_FUNCTION
-    void find_T_quad(double T, int &j0, int &j1, int &j2) const {
+    void find_T_quad(double T, size_t &j0, size_t &j1, size_t &j2) const {
       if (T <= T_grid(1)) { j0=0; j1=1; j2=2; return; }
       if (T >= T_grid(NT_points-2)) { j0=NT_points-3; j1=NT_points-2; j2=NT_points-1; return; }
-      int j=0;
-      for (int jj=0;jj<NT_points-1;++jj) {
-        if (T < T_grid(jj+1)) { j=jj; break; }
-      }
+
+      size_t j = bisect(T_grid, T, 0, NT_points-1);
+
+      if (T < T_grid(j)) printf("Error in find_T_quad LEFT\n");
+      if (T > T_grid(j+1)) printf("Error in find_T_quad RIGHT\n");
       if (j==0) j=1;
       if (j>=NT_points-1) j=NT_points-2;
       j0=j-1; j1=j; j2=j+1;
@@ -120,9 +129,9 @@ namespace dyablo {
 
     KOKKOS_INLINE_FUNCTION
     double interp(double log_nH, double T) const {
-      int i0=find_nH_cell(log_nH);
-      int i1=i0+1;
-      int j0,j1,j2; find_T_quad(T,j0,j1,j2);
+      size_t i0=find_nH_cell(log_nH);
+      size_t i1=i0+1;
+      size_t j0,j1,j2; find_T_quad(T,j0,j1,j2);
 
       double x0=T_grid(j0), x1=T_grid(j1), x2=T_grid(j2);
       double f00=values(i0,j0), f01=values(i0,j1), f02=values(i0,j2);
@@ -140,9 +149,9 @@ namespace dyablo {
 
     KOKKOS_INLINE_FUNCTION
     double dFdT(double log_nH, double T) const {
-      int i0=find_nH_cell(log_nH);
-      int i1=i0+1;
-      int j0,j1,j2; find_T_quad(T,j0,j1,j2);
+      size_t i0=find_nH_cell(log_nH);
+      size_t i1=i0+1;
+      size_t j0,j1,j2; find_T_quad(T,j0,j1,j2);
 
       double x0=T_grid(j0), x1=T_grid(j1), x2=T_grid(j2);
       double f00=values(i0,j0), f01=values(i0,j1), f02=values(i0,j2);
