@@ -22,7 +22,8 @@ public:
     yield_SNII      ( configMap.getValue<real_t>("star_feedback", "yield_SNII", 0.1) ),
     E_SNII_physical ( configMap.getValue_in_code_unit<Units::Energy>("star_feedback", "E_SNII", "1e51 erg") ),
     M_SNII_physical ( configMap.getValue_in_code_unit<Units::Mass>  ("star_feedback", "M_SNII", "10 Msun") ),
-    t_SNII_physical ( configMap.getValue_in_code_unit<Units::Time>  ("star_feedback", "t_SNII", "10 Myr") )
+    t_SNII_physical ( configMap.getValue_in_code_unit<Units::Time>  ("star_feedback", "t_SNII", "10 Myr") ),
+    cosmology       ( configMap.getValue<bool>("cosmology", "active") )
   {
   }
 
@@ -30,7 +31,8 @@ public:
 
   void update(UserData& U, ScalarSimulationData& scalar_data)
   {
-    const real_t t = scalar_data.hasValue("time_physical") ? scalar_data.get<real_t>("time_physical") : scalar_data.get<real_t>("time");
+
+    const real_t t = cosmology ? scalar_data.get<real_t>("time_physical") : scalar_data.get<real_t>("time");
     const real_t dt = scalar_data.get<real_t>("dt");
 
     enum VarIndex {
@@ -153,6 +155,8 @@ private:
   real_t E_SNII_physical;
   real_t M_SNII_physical;
   real_t t_SNII_physical;
+
+  bool cosmology;
 };
 
 } // namespace dyablo
