@@ -1,3 +1,4 @@
+import os
 import pyablo
 import numpy as np
 import sys
@@ -10,6 +11,9 @@ rtol = float(sys.argv[2])
 print("Validate Star Feedback")
 print(f"XMF filename : {xmf_filename}")
 print(f"Target Precision : {rtol}")
+
+if not os.path.exists(xmf_filename):
+    raise FileNotFoundError(f"File {xmf_filename} not found")
 
 reader = pyablo.XdmfReader()
 amr_series = reader.readTimeSeries(xmf_filename)
