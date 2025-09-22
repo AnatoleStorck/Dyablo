@@ -33,13 +33,13 @@ with h5py.File("analytical_cooling_table.h5") as f:
 
     cooling = RegularGridInterpolator(
         (log_nH_grid, redshift_grid, T_grid),
-        f["CoolingRates/Primordial/Cooling"][:] + f["CoolingRates/Metals/Cooling"][:],
+        f["CoolingRates/Primordial/Cooling"][:] + f["CoolingRates/Metals/Cooling"][:] * 1.5,
         bounds_error=False,
         method="linear",
     )
     heating = RegularGridInterpolator(
         (log_nH_grid, redshift_grid, T_grid),
-        f["CoolingRates/Primordial/Heating"][:] + f["CoolingRates/Metals/Heating"][:],
+        f["CoolingRates/Primordial/Heating"][:] + f["CoolingRates/Metals/Heating"][:] * 1.5,
         bounds_error=False,
         method="linear",
     )
