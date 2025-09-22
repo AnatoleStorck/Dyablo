@@ -16,10 +16,14 @@ import sys
 xmf_filename = sys.argv[1]  # "test_sod_2D_main.xmf"
 target_precision = float(sys.argv[2])
 png_filename = sys.argv[3]
+# Solar metallicity in Nordlund+2014, keep consistent with test_cooling.ini
+Zsun = 0.014
+Z = 5 * Zsun
 print("Validate Cooling")
 print(f"XMF filename : {xmf_filename}")
 print(f"Target Precision : {target_precision}")
 print(f"PNG output filename : {png_filename}")
+print(f"Assuming metallicity : {Z=} = {Z/Zsun} Zsun, with {Zsun=}")
 
 # --------------------------------
 # Read cooling table
@@ -33,13 +37,13 @@ with h5py.File("analytical_cooling_table.h5") as f:
 
     cooling = RegularGridInterpolator(
         (log_nH_grid, redshift_grid, T_grid),
-        f["CoolingRates/Primordial/Cooling"][:] + f["CoolingRates/Metals/Cooling"][:] * 1.5,
+        f["CoolingRates/Primordial/Cooling"][:] + f["CoolingRates/Metals/Cooling"][:] * Z / Zsun,
         bounds_error=False,
         method="linear",
     )
     heating = RegularGridInterpolator(
         (log_nH_grid, redshift_grid, T_grid),
-        f["CoolingRates/Primordial/Heating"][:] + f["CoolingRates/Metals/Heating"][:] * 1.5,
+        f["CoolingRates/Primordial/Heating"][:] + f["CoolingRates/Metals/Heating"][:] * Z / Zsun,
         bounds_error=False,
         method="linear",
     )
@@ -101,10 +105,15 @@ rho0 = data[0]["rho"][0].to("mp/cm**3").d
 nH0 = rho0 * 0.76
 T_over_mu0 = data[0]["T_over_mu"][0].to("K").d
 
+def mu_metals(T):
+    rhoZ = rho0 * Z
+    mui = mu((np.log10(nH0), 0, T))
+    return rho0 / (rho0 / mui + rhoZ / 16)
+
 # Convert T/µ to T
 T_sim = np.array(
     [
-        root(lambda T: T / mu((np.log10(nH0), 0, T)) - Tµ, Tµ).x[0]
+        root(lambda T: T / mu_metals(T) - Tµ, Tµ).x[0]
         for Tµ in [float(dt["T_over_mu"][0].to("K")) for dt in data]
     ]
 )
