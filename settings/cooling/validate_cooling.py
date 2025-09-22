@@ -33,13 +33,13 @@ with h5py.File("analytical_cooling_table.h5") as f:
 
     cooling = RegularGridInterpolator(
         (log_nH_grid, redshift_grid, T_grid),
-        f["CoolingRates/Primordial/Cooling"][:],
+        f["CoolingRates/Primordial/Cooling"][:] + f["CoolingRates/Metals/Cooling"][:],
         bounds_error=False,
         method="linear",
     )
     heating = RegularGridInterpolator(
         (log_nH_grid, redshift_grid, T_grid),
-        f["CoolingRates/Primordial/Heating"][:],
+        f["CoolingRates/Primordial/Heating"][:] + f["CoolingRates/Metals/Heating"][:],
         bounds_error=False,
         method="linear",
     )
@@ -118,12 +118,15 @@ result = solve_ivp(dT_dt, (0, t_eval[-1]), [T_sim[0]], args=(rho0, z0), t_eval=t
 T_exp = result.y[0]
 
 # Make sure the simulation matches the ODE solution
-dT = np.linalg.norm((T_sim - T_exp) / (T_sim + T_exp) * 2)
 # There may be relatively large difference close to the stiffest points, remove them
-dT_dt = np.gradient(T_exp, t_eval.to("Myr"))
-mask = np.abs(dT_dt) < 1e5  # K/Myr
+dlogT_dlogt = np.gradient(np.log10(T_exp), np.log10(t_eval.to("Myr")))
+dlogT_dlogt[:2] = 0  # Ignore first two points (nan on time)
+mask = np.abs(dlogT_dlogt) < 20   # 1 dex of T per dex of time
 nan_it = np.where(mask, 1, np.nan)
 nan_aint = np.where(~mask, 1, np.nan)
+
+dT = np.linalg.norm((T_sim[mask] - T_exp[mask]) / (T_sim[mask] + T_exp[mask]) * 2)
+print(f"χ² difference : {dT:.2e}")
 
 fig, ax = plt.subplots(constrained_layout=True)
 ax.plot(t_eval.to("Myr"), T_exp, label="ODE solver", c="gray")
@@ -148,4 +151,4 @@ ax.set(
 )
 fig.savefig(png_filename)
 
-np.testing.assert_allclose(T_sim[mask], T_exp[mask], rtol=0.05)
+np.testing.assert_allclose(np.log10(T_sim[mask]), np.log10(T_exp[mask]), rtol=target_precision)
