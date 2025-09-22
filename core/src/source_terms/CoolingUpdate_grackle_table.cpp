@@ -33,11 +33,10 @@ namespace dyablo {
    * Note: assumes arr to be regularly spaced!
    */
   KOKKOS_INLINE_FUNCTION
-  size_t find_regular_grid( const Kokkos::View<const real_t*> arr, const real_t value, const size_t N ) {
-    real_t d = arr(1) - arr(0);
-    if (value <= arr(0))   return 0;
-    if (value >= arr(N-1)) return N-2;
-    size_t i = (size_t)((value - arr(0)) / d);
+  size_t find_regular_grid( real_t arr_min, real_t arr_max, real_t arr_spacing, const real_t value, const size_t N ) {
+    if (value <= arr_min)   return 0;
+    if (value >= arr_max) return N-2;
+    size_t i = (size_t)((value - arr_min) / arr_spacing);
     if (i >= N-1) i = N-2;
     return i;
   }
@@ -138,23 +137,62 @@ namespace dyablo {
     size_t NH_points;
     size_t NT_points;
 
+    const real_t log_nH_min, log_nH_max, log_nH_spacing;
+    const real_t log_T_min, log_T_max, log_T_spacing;
+
     Table2DQuadT() = default;
     Table2DQuadT( Kokkos::View<real_t*> log_nH_grid_,
                   Kokkos::View<real_t*> T_grid_,
                   Kokkos::View<real_t**> values_ )
       : log_nH_grid(log_nH_grid_), T_grid(T_grid_), values(values_),
-        NH_points(log_nH_grid_.extent(0)), NT_points(T_grid_.extent(0)) {
+        NH_points(log_nH_grid_.extent(0)), NT_points(T_grid_.extent(0)),
+        log_nH_min(NH_points > 0 ? log_nH_grid_(0) : 0),
+        log_nH_max(NH_points > 0 ? log_nH_grid_(NH_points-1) : 0),
+        log_nH_spacing(NH_points > 1 ? (log_nH_grid_(1) - log_nH_grid_(0)) : 0),
+        log_T_min(NT_points > 0 ? log10(T_grid_(0)) : 0),
+        log_T_max(NT_points > 0 ? log10(T_grid_(NT_points-1)) : 0),
+        log_T_spacing(NT_points > 1 ? (log10(T_grid_(1)) - log10(T_grid_(0))) : 0)
+      {
         // precompute log_T_grid
         Kokkos::View<real_t*> log_T_grid("log_T_grid", NT_points);
-        auto log_T_grid_host = Kokkos::create_mirror_view(log_T_grid);
-        auto T_grid_host = Kokkos::create_mirror_view(this->T_grid);
-        Kokkos::deep_copy(T_grid_host, this->T_grid);
+        {
+          auto log_T_grid_host = Kokkos::create_mirror_view(log_T_grid);
+          auto T_grid_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), this->T_grid);
 
-        for (size_t j = 0; j < NT_points; ++j) {
-          log_T_grid_host(j) = log10(T_grid_host(j));
+          for (size_t j = 0; j < NT_points; ++j) {
+            log_T_grid_host(j) = log10(T_grid_host(j));
+          }
+          Kokkos::deep_copy(log_T_grid, log_T_grid_host);
+          this->log_T_grid = log_T_grid;
         }
-        Kokkos::deep_copy(log_T_grid, log_T_grid_host);
-        this->log_T_grid = log_T_grid;
+
+        // Verify that log_nH_grid is regularly spaced
+        {
+          auto log_nH_grid_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), this->log_nH_grid);
+          int err = 0;
+          real_t d0 = log_nH_spacing;
+          for (size_t i = 1; i < NH_points - 1; ++i) {
+            real_t di = log_nH_grid_host(i+1) - log_nH_grid_host(i);
+
+            if (FABS(di - d0) / d0 > 1e-6) err += 1;
+          }
+
+          DYABLO_ASSERT_HOST_RELEASE(err == 0, "log_nH_grid is not regularly spaced");
+        }
+
+        // Verify that log_T_grid is regularly spaced
+        {
+          int err = 0;
+          auto log_T_grid_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), this->log_T_grid);
+          real_t d0 = log_T_spacing;
+          for (size_t j = 1; j < NT_points - 1; ++j) {
+            real_t dj = log_T_grid_host(j+1) - log_T_grid_host(j);
+
+            if (FABS(dj - d0) / d0 > 1e-6) err += 1;
+          }
+
+          DYABLO_ASSERT_HOST_RELEASE(err == 0, "log_T_grid is not regularly spaced");
+        }
       }
 
     /***
@@ -165,7 +203,7 @@ namespace dyablo {
       if (log_T <= log_T_grid(1)) { j0 = 0; j1 = 1; j2 = 2; return; }
       if (log_T >= log_T_grid(NT_points-2)) { j0 = NT_points-3; j1 = NT_points-2; j2 = NT_points-1; return; }
 
-      size_t j = find_regular_grid(log_T_grid, log_T, NT_points);
+      size_t j = find_regular_grid(log_T_min, log_T_max, log_T_spacing, log_T, NT_points);
 
       if (j == 0) j = 1;
       if (j >= NT_points-1) j = NT_points-2;
@@ -177,7 +215,7 @@ namespace dyablo {
      */
     KOKKOS_INLINE_FUNCTION
     real_t interp( const real_t log_nH, const real_t T, const real_t log_T ) const {
-      size_t i0 = find_regular_grid(log_nH_grid, log_nH, NH_points);
+      size_t i0 = find_regular_grid(log_nH_min, log_nH_max, log_nH_spacing, log_nH, NH_points);
 
       size_t i1 = i0 + 1;
       size_t j0, j1, j2;
@@ -201,7 +239,7 @@ namespace dyablo {
      */
     KOKKOS_INLINE_FUNCTION
     real_t dFdT( real_t log_nH, real_t T, real_t log_T ) const {
-      size_t i0 = find_regular_grid(log_nH_grid, log_nH, NH_points);
+      size_t i0 = find_regular_grid(log_nH_min, log_nH_max, log_nH_spacing, log_nH, NH_points);
       size_t i1 = i0 + 1;
       size_t j0, j1, j2;
       find_T_quad(log_T, j0, j1, j2);
