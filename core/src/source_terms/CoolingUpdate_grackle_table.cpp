@@ -224,26 +224,30 @@ namespace dyablo {
   /***
    * @brief Compute the value of the cooling function at a given (T, nH)
    */
+  template<bool include_metals>
   KOKKOS_INLINE_FUNCTION
-  real_t compute_f( const real_t nH, const real_t log_nH, const real_t log_Z, const real_t T, const real_t log_T,
+  real_t compute_f( const real_t nH, const real_t log_nH, const real_t Z, const real_t T, const real_t log_T,
                     const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
                     const Table2DQuadT& Hmetals_tab, const Table2DQuadT& Cmetals_tab ) {
     real_t H   = Htab.interp(log_nH, T, log_T);
     real_t C   = Ctab.interp(log_nH, T, log_T);
     real_t mu  = Mutab.interp(log_nH, T, log_T);
 
-    real_t H_metals = Hmetals_tab.interp(log_nH, T, log_T);
-    real_t C_metals = Cmetals_tab.interp(log_nH, T, log_T);
+    if constexpr (include_metals) {
+      H += Hmetals_tab.interp(log_nH, T, log_T) * Z;
+      C += Cmetals_tab.interp(log_nH, T, log_T) * Z;
+    }
 
-    return 2 * mu * nH / (3 * kB) * (H + H_metals - C - C_metals);
+    return 2 * mu * nH / (3 * kB) * (H - C);
   }
 
 
   /***
    * @brief Compute the cooling function and its temperature derivative at a given (T, nH)
    */
+  template<bool include_metals>
   KOKKOS_INLINE_FUNCTION
-  std::tuple<real_t, real_t> compute_J( const real_t nH, const real_t log_nH, const real_t log_Z, const real_t T, const real_t log_T,
+  std::tuple<real_t, real_t> compute_J( const real_t nH, const real_t log_nH, const real_t Z, const real_t T, const real_t log_T,
                                         const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
                                         const Table2DQuadT& Hmetals_tab, const Table2DQuadT& Cmetals_tab ) {
     real_t H   = Htab.interp(log_nH, T, log_T);
@@ -251,17 +255,22 @@ namespace dyablo {
     real_t mu  = Mutab.interp(log_nH, T, log_T);
     real_t dmu = Mutab.dFdT(log_nH, T, log_T);
 
-    real_t H_metals = Hmetals_tab.interp(log_nH, T, log_T);
-    real_t C_metals = Cmetals_tab.interp(log_nH, T, log_T);
+    if constexpr (include_metals) {
+      H += Hmetals_tab.interp(log_nH, T, log_T) * Z;
+      C += Cmetals_tab.interp(log_nH, T, log_T) * Z;
+    }
 
     real_t prefac = 2 * mu * nH / (3 * kB);
-    real_t S  = prefac * (H + H_metals - C - C_metals);
+    real_t S  = prefac * (H - C);
     real_t dH = Htab.dFdT(log_nH, T, log_T);
     real_t dC = Ctab.dFdT(log_nH, T, log_T);
-    real_t dH_metals = Hmetals_tab.dFdT(log_nH, T, log_T);
-    real_t dC_metals = Cmetals_tab.dFdT(log_nH, T, log_T);
 
-    real_t St = prefac * (dH + dH_metals - dC - dC_metals) + S * dmu / mu;
+    if constexpr (include_metals) {
+      dH += Hmetals_tab.dFdT(log_nH, T, log_T) * Z;
+      dC += Cmetals_tab.dFdT(log_nH, T, log_T) * Z;
+    }
+
+    real_t St = prefac * (dH - dC) + S * dmu / mu;
 
     return { S, St };
   }
@@ -271,10 +280,11 @@ namespace dyablo {
    *
    * Updates T in place and returns an error estimate
    */
+  template<bool include_metals>
   KOKKOS_INLINE_FUNCTION
   std::tuple<real_t, real_t> rosenbrock3_step(
             const real_t nH, const real_t log_nH,
-            const real_t log_Z,
+            const real_t Z,
             const real_t T,
             const real_t h,
             const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
@@ -284,17 +294,17 @@ namespace dyablo {
     constexpr real_t d31 = - (4 + sqrt2) / (2 + sqrt2);
     constexpr real_t d32 = (6 + sqrt2) / (2 + sqrt2);
 
-    const auto& [f, J] = compute_J(nH, log_nH, log_Z, T, log10(T), Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab);
+    const auto& [f, J] = compute_J<include_metals>(nH, log_nH, Z, T, log10(T), Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab);
 
     real_t denom = 1.0 / (1.0 - gamma * h * J);
 
     real_t k1 = f * denom;
 
     real_t T1 = T + h * k1 / 2;
-    real_t k2 = (compute_f(nH, log_nH, log_Z, T1, log10(T1), Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab) - gamma * h * J * k1) * denom;
+    real_t k2 = (compute_f<include_metals>(nH, log_nH, Z, T1, log10(T1), Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab) - gamma * h * J * k1) * denom;
 
     real_t T2 = T + h * k2;
-    real_t k3 = (compute_f(nH, log_nH, log_Z, T2, log10(T2), Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab) - d31 * h * J * k1 - d32 * h * J * k2) * denom;
+    real_t k3 = (compute_f<include_metals>(nH, log_nH, Z, T2, log10(T2), Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab) - d31 * h * J * k1 - d32 * h * J * k2) * denom;
 
     real_t T_out = T + h / 6 * (k1 + 4 * k2 + k3);
     real_t err_est = FABS(h / 6 * (k1 - 2 * k2 + k3));
@@ -307,8 +317,9 @@ namespace dyablo {
    *
    * Returns the final temperature and the number of steps taken
    */
+  template<bool include_metals>
   KOKKOS_INLINE_FUNCTION
-  real_t evolve_rosenbrock( const real_t nH, const real_t log_nH, const real_t log_Z, const real_t T0, const real_t t_final,
+  real_t evolve_rosenbrock( const real_t nH, const real_t log_nH, const real_t Z, const real_t T0, const real_t t_final,
                             const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
                             const Table2DQuadT& Hmetals_tab, const Table2DQuadT& Cmetals_tab,
                             const real_t dt_init, int &Nsteps, const real_t tol=1e-3 ) {
@@ -319,7 +330,9 @@ namespace dyablo {
     while (t < t_final) {
       if (t + h > t_final) h = t_final - t;
 
-      const auto &[Tnew, err] = rosenbrock3_step(nH, log_nH, log_Z, T, h, Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab);
+      const auto &&[Tnew, err] = rosenbrock3_step<include_metals>(
+        nH, log_nH, Z, T, h, Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab
+      );
 
       real_t scale = fabs(T) + 1e-40;
       real_t rel_err = err / scale;
@@ -361,7 +374,7 @@ namespace dyablo {
   }
 
 
-  enum VarIndex_Cooling {Irho, IE_tot, Irho_vx, Irho_vy, Irho_vz};
+  enum VarIndex_Cooling {Irho, IE_tot, Irho_vx, Irho_vy, Irho_vz, Imetals};
 }
 
 
@@ -379,6 +392,7 @@ private:
   real_t smallc;
   real_t smallp;
   std::string cooling_table;
+  real_t Zsolar;
 
   GrackleTable C, H, mu;
   GrackleTable C_metals, H_metals;
@@ -391,7 +405,8 @@ public:
   : foreach_cell(foreach_cell),
     timers(timers),
     gamma0(configMap.getValue<real_t>("hydro", "gamma", 5.0/3.0)),
-    cooling_table(configMap.getValue<std::string>("cooling", "grackle_table"))
+    cooling_table(configMap.getValue<std::string>("cooling", "grackle_table")),
+    Zsolar(configMap.getValue<real_t>("cooling", "Zsolar", 0.014))
   {
     // Open the cooling table
     hid_t m_hdf5_file;
@@ -497,7 +512,7 @@ public:
     return table;
   }
 
-  template<int ndim>
+  template<int ndim, bool include_metals>
   void update_aux( UserData& U,
                    ScalarSimulationData& scalar_data)
   {
@@ -505,13 +520,18 @@ public:
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
     timers.get("Cooling simple").start();
 
-    auto Uout = U.getAccessor({
-          {"rho_next",    Irho},
-          {"e_tot_next",  IE_tot},
-          {"rho_vx_next", Irho_vx},
-          {"rho_vy_next", Irho_vy},
-          {"rho_vz_next", Irho_vz},
-    });
+    std::vector<dyablo::UserData_fields::FieldAccessor_FieldInfo> fields_info = {
+      {"rho_next",    Irho},
+      {"e_tot_next",  IE_tot},
+      {"rho_vx_next", Irho_vx},
+      {"rho_vy_next", Irho_vy},
+      {"rho_vz_next", Irho_vz},
+    };
+    if constexpr (include_metals) {
+      fields_info.push_back({"metallicity", Imetals});
+    }
+
+    auto Uout = U.getAccessor(fields_info);
 
     const auto& CTable = this->C;
     const auto& HTable = this->H;
@@ -566,6 +586,8 @@ public:
     int Nsteps_tot = 0;
     int Ncells_tot = 0;
 
+    real_t Zsolar = this->Zsolar;
+
     foreach_cell.reduce_cell( "Cooling::update", Uout.getShape(),
       KOKKOS_LAMBDA(const ForeachCell::CellIndex& iCell, int & Nsteps_tot, int & Ncells_tot) {
         dyablo::ConsHydroState u;
@@ -584,10 +606,19 @@ public:
         // Newton-Raphson to find T from T/µ
         real_t T = find_T(log_nH, T_over_mu, mutab);
 
-        real_t log_Z = 0;
+        real_t Z = 0;
+        if constexpr (include_metals) {
+          // Rescale to solar abundance
+          Z = Uout.at(iCell, Imetals);
+          Z /= q.rho * Zsolar;
+        }
 
         // Do cooling timestep
-        real_t Tend = evolve_rosenbrock(nH, log_nH, log_Z, T, dt_tot_s, Htab, Ctab, mutab, Hmetals_tab, Cmetals_tab, dt_tot_s, Nsteps_tot);
+        real_t Tend = evolve_rosenbrock<include_metals>(
+          nH, log_nH, Z, T, dt_tot_s,
+          Htab, Ctab, mutab, Hmetals_tab, Cmetals_tab,
+          dt_tot_s, Nsteps_tot
+        );
 
         if ((iCell.iOct.iOct == 0) && iCell.i == 0 && iCell.j == 0 && iCell.k == 0)
           printf("T = %e, nH = %e K\n", T, nH);
@@ -614,10 +645,14 @@ public:
   {
     int ndim = foreach_cell.getDim();
 
+    bool has_metals = U.has_field("metallicity");
+
     if (ndim == 2)
       throw "2D not implemented";
-    else
-      update_aux<3>(U, scalar_data);
+    else if (ndim == 3 && has_metals)
+      update_aux<3, true>(U, scalar_data);
+    else if (ndim == 3 && !has_metals)
+      update_aux<3, false>(U, scalar_data);
   }
 
 };
