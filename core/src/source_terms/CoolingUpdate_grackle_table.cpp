@@ -155,28 +155,24 @@ namespace dyablo {
         log_T_spacing(NT_points > 1 ? (log10(T_grid_(1)) - log10(T_grid_(0))) : 0)
       {
         // precompute log_T_grid
-        Kokkos::View<real_t*> log_T_grid("log_T_grid", NT_points);
         {
-          auto log_T_grid_host = Kokkos::create_mirror_view(log_T_grid);
-          auto T_grid_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), this->T_grid);
-
-          for (size_t j = 0; j < NT_points; ++j) {
-            log_T_grid_host(j) = log10(T_grid_host(j));
-          }
-          Kokkos::deep_copy(log_T_grid, log_T_grid_host);
+          auto log_T_grid = Kokkos::View<real_t*>("log_T_grid", NT_points);
+          Kokkos::parallel_for("compute_log_T_grid", NT_points, KOKKOS_LAMBDA(const size_t j) {
+            log_T_grid(j) = log10(T_grid(j));
+          });
           this->log_T_grid = log_T_grid;
         }
 
         // Verify that log_nH_grid is regularly spaced
         {
-          auto log_nH_grid_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), log_nH_grid_);
           int err = 0;
-          real_t d0 = log_nH_spacing;
-          for (size_t i = 1; i < NH_points - 1; ++i) {
-            real_t di = log_nH_grid_host(i+1) - log_nH_grid_host(i);
+          auto &log_nH_grid = this->log_nH_grid;
+          Kokkos::parallel_reduce("check_log_nH_grid", NH_points - 2, KOKKOS_LAMBDA(const size_t i, int& err) {
+            real_t d0 = log_nH_spacing;
+            real_t di = log_nH_grid(i+1) - log_nH_grid(i);
 
             if (FABS(di - d0) / d0 > 1e-6) err += 1;
-          }
+          }, Kokkos::Sum<int>(err));
 
           DYABLO_ASSERT_HOST_RELEASE(err == 0, "log_nH_grid is not regularly spaced");
         }
@@ -184,13 +180,13 @@ namespace dyablo {
         // Verify that log_T_grid is regularly spaced
         {
           int err = 0;
-          auto log_T_grid_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), this->log_T_grid);
-          real_t d0 = log_T_spacing;
-          for (size_t j = 1; j < NT_points - 1; ++j) {
-            real_t dj = log_T_grid_host(j+1) - log_T_grid_host(j);
+          auto &log_T_grid = this->log_T_grid;
+          Kokkos::parallel_reduce("check_log_T_grid", NT_points - 2, KOKKOS_LAMBDA(const size_t j, int& err) {
+            real_t d0 = log_T_spacing;
+            real_t dj = log_T_grid(j+1) - log_T_grid(j);
 
             if (FABS(dj - d0) / d0 > 1e-6) err += 1;
-          }
+          }, Kokkos::Sum<int>(err));
 
           DYABLO_ASSERT_HOST_RELEASE(err == 0, "log_T_grid is not regularly spaced");
         }
