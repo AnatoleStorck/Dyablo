@@ -127,14 +127,35 @@ namespace dyablo {
     return f0 * dL0 + f1 * dL1 + f2 * dL2;
   }
 
+  void check_spacing(Kokkos::View<const real_t*> arr, const real_t spacing, const std::string& name) {
+    int err = 0;
+    Kokkos::parallel_reduce("check_spacing", arr.extent(0) - 2, KOKKOS_LAMBDA(const size_t i, int& err) {
+      real_t d0 = spacing;
+      real_t di = arr(i+1) - arr(i);
+
+      if (FABS(di - d0) / d0 > 1e-6) err += 1;
+    }, Kokkos::Sum<int>(err));
+
+    DYABLO_ASSERT_HOST_RELEASE(err == 0, name << " grid is not regularly spaced.");
+  }
+
+  Kokkos::View<real_t*> compute_log10(Kokkos::View<const real_t*> in) {
+    Kokkos::View<real_t*> out("log10_output", in.extent(0));
+    DYABLO_ASSERT_HOST_RELEASE(in.extent(0) == out.extent(0), "Input and output array must have the same size.");
+    Kokkos::parallel_for("compute_log10", in.extent(0), KOKKOS_LAMBDA(const size_t i) {
+      out(i) = log10(in(i));
+    });
+    return out;
+  }
+
   /***
    * @brief 2D table (log_nH, T) with quadratic interpolation on temperature
    */
   struct Table2DQuadT {
-    Kokkos::View<real_t*> log_nH_grid;  // length NH_points
-    Kokkos::View<real_t*> log_T_grid;   // length NT_points
-    Kokkos::View<real_t*> T_grid;       // length NT_points
-    Kokkos::View<real_t**> values;      // shape (NH_points, NT_points)
+    Kokkos::View<const real_t*> log_nH_grid;  // length NH_points
+    Kokkos::View<const real_t*> T_grid;       // length NT_points
+    Kokkos::View<const real_t*> log_T_grid;   // length NT_points
+    Kokkos::View<const real_t**> values;      // shape (NH_points, NT_points)
     size_t NH_points;
     size_t NT_points;
 
@@ -142,54 +163,20 @@ namespace dyablo {
     const real_t log_T_min, log_T_max, log_T_spacing;
 
     Table2DQuadT() = default;
-    Table2DQuadT( Kokkos::View<real_t*> log_nH_grid_,
-                  Kokkos::View<real_t*> T_grid_,
-                  Kokkos::View<real_t**> values_ )
-      : log_nH_grid(log_nH_grid_), T_grid(T_grid_), values(values_),
+    Table2DQuadT( Kokkos::View<const real_t*> log_nH_grid_,
+                  Kokkos::View<const real_t*> T_grid_,
+                  Kokkos::View<const real_t**> values_ )
+      : log_nH_grid(log_nH_grid_), T_grid(T_grid_), log_T_grid(compute_log10(T_grid_)), values(values_),
         NH_points(log_nH_grid_.extent(0)), NT_points(T_grid_.extent(0)),
         log_nH_min(NH_points > 0 ? log_nH_grid_(0) : 0),
         log_nH_max(NH_points > 0 ? log_nH_grid_(NH_points-1) : 0),
         log_nH_spacing(NH_points > 1 ? (log_nH_grid_(1) - log_nH_grid_(0)) : 0),
-        log_T_min(NT_points > 0 ? log10(T_grid_(0)) : 0),
-        log_T_max(NT_points > 0 ? log10(T_grid_(NT_points-1)) : 0),
-        log_T_spacing(NT_points > 1 ? (log10(T_grid_(1)) - log10(T_grid_(0))) : 0)
+        log_T_min(NT_points > 0 ? log_T_grid(0) : 0),
+        log_T_max(NT_points > 0 ? log_T_grid(NT_points-1) : 0),
+        log_T_spacing(NT_points > 1 ? (log_T_grid(1) - log_T_grid(0)) : 0)
       {
-        // precompute log_T_grid
-        {
-          auto log_T_grid = Kokkos::View<real_t*>("log_T_grid", NT_points);
-          Kokkos::parallel_for("compute_log_T_grid", NT_points, KOKKOS_LAMBDA(const size_t j) {
-            log_T_grid(j) = log10(T_grid(j));
-          });
-          this->log_T_grid = log_T_grid;
-        }
-
-        // Verify that log_nH_grid is regularly spaced
-        {
-          int err = 0;
-          auto &log_nH_grid = this->log_nH_grid;
-          Kokkos::parallel_reduce("check_log_nH_grid", NH_points - 2, KOKKOS_LAMBDA(const size_t i, int& err) {
-            real_t d0 = log_nH_spacing;
-            real_t di = log_nH_grid(i+1) - log_nH_grid(i);
-
-            if (FABS(di - d0) / d0 > 1e-6) err += 1;
-          }, Kokkos::Sum<int>(err));
-
-          DYABLO_ASSERT_HOST_RELEASE(err == 0, "log_nH_grid is not regularly spaced");
-        }
-
-        // Verify that log_T_grid is regularly spaced
-        {
-          int err = 0;
-          auto &log_T_grid = this->log_T_grid;
-          Kokkos::parallel_reduce("check_log_T_grid", NT_points - 2, KOKKOS_LAMBDA(const size_t j, int& err) {
-            real_t d0 = log_T_spacing;
-            real_t dj = log_T_grid(j+1) - log_T_grid(j);
-
-            if (FABS(dj - d0) / d0 > 1e-6) err += 1;
-          }, Kokkos::Sum<int>(err));
-
-          DYABLO_ASSERT_HOST_RELEASE(err == 0, "log_T_grid is not regularly spaced");
-        }
+        check_spacing(log_T_grid, log_T_spacing, "log_T_grid");
+        check_spacing(log_nH_grid, log_nH_spacing, "log_nH_grid");
       }
 
     /***
@@ -693,8 +680,7 @@ public:
         Ncells_tot ++;
     }, Nsteps_tot, Ncells_tot);
 
-    std::cout << "Ncells = " << Ncells_tot << ", Nsteps = " << Nsteps_tot
-    << ", Nsteps/Ncells = " << (real_t)Nsteps_tot / Ncells_tot << std::endl;
+    std::cout << "Ncells = " << Ncells_tot << ", Nsteps = " << Nsteps_tot << ", Nsteps/Ncells = " << (real_t)Nsteps_tot / Ncells_tot << std::endl;
 
     timers.get("Cooling simple").stop();
   }
