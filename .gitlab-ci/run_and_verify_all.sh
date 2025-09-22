@@ -23,18 +23,16 @@ run_and_verify(){
     then
 	    echo "run ${ini_file} success"
         echo "Validate : $verification_script"
-        (
-            cd build/dyablo/bin
-            python3 $verification_script &> ../../../$verification_stdout_filename
-            if [ $? -eq 0 ]
-            then
-                success_list+=(${reason_success})
-            else
-                echo "verification ${verification_script} fail : see ${verification_stdout_filename}"
-                err_count=$((err_count+1))
-                success_list+=(${reason_verification_failure})
-            fi
-        )
+        cd build/dyablo/bin
+        python3 $verification_script &> ../../../$verification_stdout_filename
+        if [ $? -eq 0 ]
+        then
+            success_list+=(${reason_success})
+        else
+            echo "verification ${verification_script} fail : see ${verification_stdout_filename}"
+            err_count=$((err_count+1))
+            success_list+=(${reason_verification_failure})
+        fi
     else
 	    echo "run ${ini_file} fail : see ${run_stdout_filename}"
 	    err_count=$((err_count+1))
