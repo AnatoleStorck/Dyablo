@@ -33,6 +33,7 @@ run_and_verify(){
             err_count=$((err_count+1))
             success_list+=(${reason_verification_failure})
         fi
+        cd ../../..
     else
 	    echo "run ${ini_file} fail : see ${run_stdout_filename}"
 	    err_count=$((err_count+1))
