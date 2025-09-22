@@ -678,9 +678,6 @@ public:
           dt_tot_s, Nsteps_tot
         );
 
-        if ((iCell.iOct.iOct == 0) && iCell.i == 0 && iCell.j == 0 && iCell.k == 0)
-          printf("T = %e, nH = %e K\n", T, nH);
-
         // Convert back to pressure
         {
           real_t mu, mu_noZ;
