@@ -96,3 +96,4 @@ configure_file(validate_star_formation.py validate_star_formation.py COPYONLY)
 
 # Cooling test
 configure_file(../../settings/cooling/test_cooling.ini test_cooling.ini COPYONLY)
+configure_file(../../settings/cooling/validate_cooling.py validate_cooling.py COPYONLY)
