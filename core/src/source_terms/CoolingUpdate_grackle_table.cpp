@@ -50,7 +50,7 @@ namespace dyablo {
    * (i.e. (value - axes(i)) / (axes(i+1) - axes(i)) )
    */
   KOKKOS_INLINE_FUNCTION
-  std::tuple<size_t, real_t> get_index( const Kokkos::View<const real_t*>& axes, const real_t value )
+  void get_index( const Kokkos::View<const real_t*>& axes, const real_t value, size_t& index, real_t& fraction )
   {
     size_t imax = axes.extent(0) - 1;
     size_t i = 0;
@@ -70,7 +70,8 @@ namespace dyablo {
       f = (value - axes(i)) / (axes(i+1) - axes(i));
       f = FMIN(1, FMAX(0, f));
     }
-    return {i, f};
+    index = i;
+    fraction = f;
   }
 
   struct GrackleTable {
@@ -168,7 +169,7 @@ namespace dyablo {
 
         // Verify that log_nH_grid is regularly spaced
         {
-          auto log_nH_grid_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), this->log_nH_grid);
+          auto log_nH_grid_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), log_nH_grid_);
           int err = 0;
           real_t d0 = log_nH_spacing;
           for (size_t i = 1; i < NH_points - 1; ++i) {
@@ -285,9 +286,10 @@ namespace dyablo {
    */
   template<bool include_metals>
   KOKKOS_INLINE_FUNCTION
-  std::tuple<real_t, real_t> compute_J( const real_t nH, const real_t log_nH, const real_t Z_solar, const real_t T, const real_t log_T,
-                                        const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
-                                        const Table2DQuadT& Hmetals_tab, const Table2DQuadT& Cmetals_tab ) {
+  void compute_J( const real_t nH, const real_t log_nH, const real_t Z_solar, const real_t T, const real_t log_T,
+                  const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
+                  const Table2DQuadT& Hmetals_tab, const Table2DQuadT& Cmetals_tab,
+                  real_t& f, real_t& J ) {
     real_t H   = Htab.interp(log_nH, T, log_T);
     real_t C   = Ctab.interp(log_nH, T, log_T);
     real_t mu  = Mutab.interp(log_nH, T, log_T);
@@ -310,7 +312,8 @@ namespace dyablo {
 
     real_t St = prefac * (dH - dC) + S * dmu / mu;
 
-    return { S, St };
+    f = S;
+    J = St;
   }
 
   /***
@@ -320,19 +323,21 @@ namespace dyablo {
    */
   template<bool include_metals>
   KOKKOS_INLINE_FUNCTION
-  std::tuple<real_t, real_t> rosenbrock3_step(
+  void rosenbrock3_step(
             const real_t nH, const real_t log_nH,
             const real_t Z_solar,
             const real_t T,
             const real_t h,
             const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
-            const Table2DQuadT& Hmetals_tab, const Table2DQuadT& Cmetals_tab ) {
+            const Table2DQuadT& Hmetals_tab, const Table2DQuadT& Cmetals_tab,
+            real_t &T_out, real_t &err_est ) {
     constexpr real_t sqrt2 = 1.4142135623730951;
     constexpr real_t gamma = 1.0 / (2.0 + sqrt2);
     constexpr real_t d31 = - (4 + sqrt2) / (2 + sqrt2);
     constexpr real_t d32 = (6 + sqrt2) / (2 + sqrt2);
 
-    const auto& [f, J] = compute_J<include_metals>(nH, log_nH, Z_solar, T, log10(T), Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab);
+    real_t f, J;
+    compute_J<include_metals>(nH, log_nH, Z_solar, T, log10(T), Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab, f, J);
 
     real_t denom = 1.0 / (1.0 - gamma * h * J);
 
@@ -344,10 +349,8 @@ namespace dyablo {
     real_t T2 = T + h * k2;
     real_t k3 = (compute_f<include_metals>(nH, log_nH, Z_solar, T2, log10(T2), Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab) - d31 * h * J * k1 - d32 * h * J * k2) * denom;
 
-    real_t T_out = T + h / 6 * (k1 + 4 * k2 + k3);
-    real_t err_est = FABS(h / 6 * (k1 - 2 * k2 + k3));
-
-    return {T_out, err_est};
+    T_out = T + h / 6 * (k1 + 4 * k2 + k3);
+    err_est = FABS(h / 6 * (k1 - 2 * k2 + k3));
   }
 
   /***
@@ -368,8 +371,10 @@ namespace dyablo {
     while (t < t_final) {
       if (t + h > t_final) h = t_final - t;
 
-      const auto &&[Tnew, err] = rosenbrock3_step<include_metals>(
-        nH, log_nH, Z_solar, T, h, Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab
+      real_t Tnew, err;
+
+      rosenbrock3_step<include_metals>(
+        nH, log_nH, Z_solar, T, h, Htab, Ctab, Mutab, Hmetals_tab, Cmetals_tab, Tnew, err
       );
 
       real_t scale = fabs(T) + 1e-40;
@@ -391,11 +396,11 @@ namespace dyablo {
    * @brief Compute mu from temperature, density, and metallicity
    */
   KOKKOS_INLINE_FUNCTION
-  std::tuple<real_t, real_t> compute_mu( const real_t log_nH, const real_t T, const real_t Z, const Table2DQuadT& mutab ) {
-    real_t mu_noZ = mutab.interp(log_nH, T, log10(T));
+  void compute_mu( const real_t log_nH, const real_t T, const real_t Z, const Table2DQuadT& mutab,
+                   real_t &mu, real_t &mu_noZ ) {
+    mu_noZ = mutab.interp(log_nH, T, log10(T));
     // We assume µ_Z = 16 for solar metallicity
-    real_t mu = 1 / (1 / mu_noZ + Z / 16);
-    return {mu, mu_noZ};
+    mu = 1 / (1 / mu_noZ + Z / 16);
   }
 
   /***
@@ -411,8 +416,9 @@ namespace dyablo {
     int iter = 0;
     for (iter = 0; iter < max_iter; ++iter) {
       real_t log_T = log10(T);
+      real_t mu, mu_noZ;
       // Note: chain rule applies here
-      const auto&& [mu, mu_noZ] = compute_mu(log_nH, T, Z, mutab);
+      compute_mu(log_nH, T, Z, mutab, mu, mu_noZ);
       real_t dmu_dT = mutab.dFdT(log_nH, T, log_T) * pow(mu / mu_noZ, 2);
 
       real_t f = T / mu - T_over_mu;
@@ -610,7 +616,9 @@ public:
     Kokkos::parallel_for("Cooling::interpolate_redshift",
       Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0}, {CTable.data.extent(0), CTable.data.extent(2)}),
       KOKKOS_LAMBDA(const size_t i, const size_t j) {
-        const auto& [iz, fz] = get_index(CTable.var2, redshift);
+        size_t iz;
+        real_t fz;
+        get_index(CTable.var2, redshift, iz, fz);
         Cz(i,j)  = (1 - fz) * CTable.data(i, iz, j) + fz * CTable.data(i, iz+1, j);
         Hz(i,j)  = (1 - fz) * HTable.data(i, iz, j) + fz * HTable.data(i, iz+1, j);
         Cz_metals(i,j) = (1 - fz) * CMetals_Table.data(i, iz, j) + fz * CMetals_Table.data(i, iz+1, j);
@@ -679,7 +687,8 @@ public:
 
         // Convert back to pressure
         {
-          const auto&& [mu, mu_noZ] = compute_mu(log_nH, Tend, Z, mutab);
+          real_t mu, mu_noZ;
+          compute_mu(log_nH, Tend, Z, mutab, mu, mu_noZ);
           T_over_mu = Tend / mu;
         }
         P_physical = T_over_mu * K * rho_physical / mp_over_kb;
