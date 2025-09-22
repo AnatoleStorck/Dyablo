@@ -68,10 +68,19 @@ def mean_molecular_weight(nH, z, T):
     return mu_ionized * transition + mu_neutral * (1 - transition)
 
 
+def cooling_metals(nH, z, T):
+    return np.exp(-(np.log10(T) - 5.5)**2 / 0.25) * 5e-22 + np.exp(-(np.log10(T) - 5.5)**2 / 4) * 1e-24
+
+def heating_metals(nH, z, T):
+    return 1 / (1 + np.exp((np.log10(T) - 6) * 3)) * 3e-27
+
+
 # Allocate arrays
 cooling_table = np.zeros((len(log_nH_grid), len(redshift_grid), len(T_grid)))
 heating_table = np.zeros_like(cooling_table)
 mu_table = np.zeros_like(cooling_table)
+cooling_table_metal = np.zeros_like(cooling_table)
+heating_table_metal = np.zeros_like(cooling_table)
 
 # Fill tables
 for i, log_nH in enumerate(log_nH_grid):
@@ -81,6 +90,9 @@ for i, log_nH in enumerate(log_nH_grid):
             cooling_table[i, j, k] = cooling_rate(nH, z, T)
             heating_table[i, j, k] = heating_rate(nH, z, T)
             mu_table[i, j, k] = mean_molecular_weight(nH, z, T)
+            # Add metal contributions
+            cooling_table_metal[i, j, k] += cooling_metals(nH, z, T)
+            heating_table_metal[i, j, k] += heating_metals(nH, z, T)
 
 attrs = {
     "Dimension": cooling_table.shape,
@@ -100,8 +112,8 @@ with h5py.File("analytical_cooling_table.h5", "w") as f:
 
     # Store as CoolingRates/Metals with zero arrays
     metals = f.create_group("CoolingRates/Metals")
-    metals.create_dataset("Cooling", data=np.zeros_like(cooling_table))
-    metals.create_dataset("Heating", data=np.zeros_like(heating_table))
+    metals.create_dataset("Cooling", data=cooling_table_metal)
+    metals.create_dataset("Heating", data=heating_table_metal)
 
     for dataset in (
         prim["Cooling"],
