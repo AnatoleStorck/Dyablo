@@ -10,6 +10,10 @@ namespace dyablo {
 
   namespace {
 
+  /***
+   * @brief Binary search for value in arr
+   * Returns `i` such that arr(i) <= value < arr(i+1)
+   * */
   KOKKOS_INLINE_FUNCTION
   size_t bisect( const Kokkos::View<const real_t*> arr, const real_t value, size_t left, size_t right ) {
     while (left < right - 1) {
@@ -23,6 +27,11 @@ namespace dyablo {
     return left;
   }
 
+  /***
+   * @brief Find the index `value` in regularly spaced array `arr`
+   *
+   * Note: assumes arr to be regularly spaced!
+   */
   KOKKOS_INLINE_FUNCTION
   size_t find_regular_grid( const Kokkos::View<const real_t*> arr, const real_t value, const size_t N ) {
     real_t d = arr(1) - arr(0);
@@ -67,13 +76,17 @@ namespace dyablo {
 
   struct GrackleTable {
     Kokkos::View<real_t***, Kokkos::LayoutRight> data;
+    Kokkos::View<real_t*> var1;
+    Kokkos::View<real_t*> var2;
     Kokkos::View<real_t*> temperature;
-    Kokkos::View<real_t*> log_nH;
-    Kokkos::View<real_t*> redshift;
   };
+
 
   constexpr real_t kB = Units::KBOLTZ().convert_to(Units::erg() / Units::K());
 
+  /***
+   * @brief 2D table (log_nH, T) with quadratic interpolation on temperature
+   */
   struct Table2DQuadT {
     Kokkos::View<real_t*> log_nH_grid;  // length NH_points
     Kokkos::View<real_t*> log_T_grid;   // length NT_points
@@ -100,6 +113,9 @@ namespace dyablo {
         this->log_T_grid = log_T_grid;
       }
 
+    /***
+     * @brief Find the index of the cell along the nH dimension
+     */
     KOKKOS_INLINE_FUNCTION
     size_t find_nH_cell(real_t log_nH) const {
       if (log_nH <= log_nH_grid(0))           return 0;
@@ -110,6 +126,9 @@ namespace dyablo {
       return j;
     }
 
+    /***
+     * @brief Find the three indices along the T dimension for quadratic interpolation
+     */
     KOKKOS_INLINE_FUNCTION
     void find_T_quad(const real_t log_T, size_t &j0, size_t &j1, size_t &j2) const {
       if (log_T <= log_T_grid(1)) { j0 = 0; j1 = 1; j2 = 2; return; }
@@ -122,6 +141,9 @@ namespace dyablo {
       j0 = j - 1; j1 = j; j2 = j + 1;
     }
 
+    /***
+     * @brief Evaluate the Lagrange polynomial at a given point
+     */
     KOKKOS_INLINE_FUNCTION
     static real_t lagrange_eval(const real_t x,
                                 const real_t x0, const real_t f0,
@@ -139,6 +161,9 @@ namespace dyablo {
       return f0 * L0 + f1 * L1 + f2 * L2;
     }
 
+    /***
+     * @brief Evaluate the derivative of the Lagrange polynomial at a given point
+     */
     KOKKOS_INLINE_FUNCTION
     static real_t lagrange_deriv(const real_t x,
                                  const real_t x0, const real_t f0,
@@ -159,6 +184,9 @@ namespace dyablo {
       return f0 * dL0 + f1 * dL1 + f2 * dL2;
     }
 
+    /***
+     * @brief Interpolate the table at given (log_nH, T)
+     */
     KOKKOS_INLINE_FUNCTION
     real_t interp(real_t log_nH, real_t T, real_t log_T) const {
       size_t i0 = find_nH_cell(log_nH);
@@ -180,6 +208,9 @@ namespace dyablo {
       return (1 - w) * val0 + w * val1;
     }
 
+    /***
+     * @brief Interpolate the derivative dF/dT at given (log_nH, T)
+     */
     KOKKOS_INLINE_FUNCTION
     real_t dFdT(real_t log_nH, real_t T, real_t log_T) const {
       size_t i0 = find_nH_cell(log_nH);
@@ -202,6 +233,9 @@ namespace dyablo {
     }
   };
 
+  /***
+   * @brief Compute the value of the cooling function at a given (T, nH)
+   */
   KOKKOS_INLINE_FUNCTION
   real_t compute_f(const real_t T, const real_t log_T, const real_t nH, const real_t log_nH,
                    const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab) {
@@ -212,6 +246,10 @@ namespace dyablo {
     return 2 * mu * nH / (3 * kB) * (H - C);
   }
 
+
+  /***
+   * @brief Compute the cooling function and its temperature derivative at a given (T, nH)
+   */
   KOKKOS_INLINE_FUNCTION
   std::tuple<real_t, real_t> compute_J(const real_t T, const real_t log_T, const real_t nH, const real_t log_nH,
                                        const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab) {
@@ -227,6 +265,11 @@ namespace dyablo {
     return { S, St };
   }
 
+  /***
+   * @brief Perform a single Rosenbrock3 step
+   *
+   * Updates T in place and returns an error estimate
+   */
   KOKKOS_INLINE_FUNCTION
   void rosenbrock3_step(real_t &T, const real_t nH, const real_t log_nH, const real_t h,
                         const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
@@ -254,6 +297,11 @@ namespace dyablo {
     err_est = FABS(h / 6 * (k1 - 2 * k2 + k3));
   }
 
+  /***
+   * @brief Evolve the temperature from T0 to T_final using adaptive Rosenbrock3
+   *
+   * Returns the final temperature and the number of steps taken
+   */
   KOKKOS_INLINE_FUNCTION
   real_t evolve_rosenbrock(const real_t T0, const real_t nH, const real_t log_nH, const real_t t_final,
                            const Table2DQuadT& Htab, const Table2DQuadT& Ctab, const Table2DQuadT& Mutab,
@@ -284,6 +332,11 @@ namespace dyablo {
     return T;
   }
 
+  /***
+   * @brief Given log_nH and T_over_mu, find T such that T/mu(T, nH) = T_over_mu
+   *
+   * Uses Newton-Raphson method
+   */
   KOKKOS_INLINE_FUNCTION
   real_t find_T(const real_t log_nH, const real_t T_over_mu, const Table2DQuadT& mutab){
     int max_iter = 20;
