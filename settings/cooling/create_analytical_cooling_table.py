@@ -1,3 +1,12 @@
+"""
+Create an analytical cooling table with key features of typical cooling functions.
+The cooling and heating rates are *not* meant to be physically accurate, but
+capture the main qualitative features of realistic cooling functions.
+
+They are to be used for testing the robustness of the cooling implementation
+in Dyablo.
+"""
+
 import numpy as np
 import h5py
 
@@ -8,7 +17,7 @@ T_grid = np.logspace(1, 8, 100)  # temperature in K
 
 
 def cooling_rate(nH, z, T):
-    """Mimic the cooling function shape shown in the blue curves.
+    """Mimic a typical cooling function.
 
     Parameters:
     -----------
@@ -35,7 +44,7 @@ def cooling_rate(nH, z, T):
 
 
 def heating_rate(nH, z, T):
-    """Example heating function.
+    """Mimic a typical heating function.
     Parameters:
     -----------
     nH : float
@@ -52,10 +61,25 @@ def heating_rate(nH, z, T):
     H_break = cooling_rate(nH, z, 8e3)
     # Smooth transition: heating drops above 2e4 K
     transition = 1 / (1 + np.exp(-(np.log10(T) - np.log10(2e4)) * 5))
-    return H_break * (1-transition)
+    return H_break * (1 - transition)
 
 
 def mean_molecular_weight(nH, z, T):
+    """Approximate mean molecular weight as a function of temperature.
+
+        Parameters:
+    -----------
+    nH : float
+        Hydrogen number density in cm^-3
+    z : float
+        Redshift
+    T : float
+        Temperature in K
+
+    Returns:
+    --------
+    Mean molecular weight in atomic mass units (excluding metals)
+    """
     # Assume X = 0.76 (hydrogen), Y = 0.24 (helium)
     X = 0.76
     Y = 0.24
@@ -69,9 +93,42 @@ def mean_molecular_weight(nH, z, T):
 
 
 def cooling_metals(nH, z, T):
-    return np.exp(-(np.log10(T) - 5.5)**2 / 0.25) * 5e-22 + np.exp(-(np.log10(T) - 5.5)**2 / 4) * 1e-24
+    """Mimic metal cooling contribution.
+
+    Parameters:
+    -----------
+    nH : float
+        Hydrogen number density in cm^-3
+    z : float
+        Redshift
+    T : float
+        Temperature in K
+
+    Returns:
+    --------
+    Cooling rate in erg cm^3 s^-1"""
+    return (
+        np.exp(-((np.log10(T) - 5.5) ** 2) / 0.25) * 5e-22
+        + np.exp(-((np.log10(T) - 5.5) ** 2) / 4) * 1e-24
+    )
+
 
 def heating_metals(nH, z, T):
+    """Mimic metal heating contribution.
+
+        Parameters:
+    -----------
+    nH : float
+        Hydrogen number density in cm^-3
+    z : float
+        Redshift
+    T : float
+        Temperature in K
+
+    Returns:
+    --------
+    Heating rate in erg cm^3 s^-1
+    """
     return 1 / (1 + np.exp((np.log10(T) - 6) * 3)) * 3e-27
 
 
