@@ -630,13 +630,10 @@ public:
     auto code_density  = Units::code_units().getUnit<Units::Density>();
     auto code_pressure = Units::code_units().getUnit<Units::Pressure>();
 
-    int Nsteps_tot = 0;
-    int Ncells_tot = 0;
-
     real_t Zsolar = this->Zsolar;
 
-    foreach_cell.reduce_cell( "Cooling::update", Uout.getShape(),
-      KOKKOS_LAMBDA(const ForeachCell::CellIndex& iCell, int & Nsteps_tot, int & Ncells_tot) {
+    foreach_cell.foreach_cell( "Cooling::update", Uout.getShape(),
+      KOKKOS_LAMBDA(const ForeachCell::CellIndex& iCell) {
         dyablo::ConsHydroState u;
         dyablo::getConservativeState<ndim>(Uout, iCell, u);
         PrimHydroState q = dyablo::consToPrim<ndim>(u, gamma0);
@@ -659,11 +656,14 @@ public:
         real_t T = find_T(log_nH, T_over_mu, Z, mutab);
 
         // Do cooling timestep
-        real_t Tend = evolve_rosenbrock<include_metals>(
-          nH, log_nH, Z / Zsolar, T, dt_tot_s,
-          Htab, Ctab, mutab, Hmetals_tab, Cmetals_tab,
-          dt_tot_s, Nsteps_tot
-        );
+        {
+          int Nsteps = 0;
+          real_t Tend = evolve_rosenbrock<include_metals>(
+            nH, log_nH, Z / Zsolar, T, dt_tot_s,
+            Htab, Ctab, mutab, Hmetals_tab, Cmetals_tab,
+            dt_tot_s, Nsteps
+          );
+        }
 
         // Convert back to pressure
         {
@@ -677,10 +677,8 @@ public:
         // Update state
         u = dyablo::primToCons<ndim>(q, gamma0);
         dyablo::setConservativeState<ndim>(Uout, iCell, u);
-        Ncells_tot ++;
-    }, Nsteps_tot, Ncells_tot);
+    });
 
-    std::cout << "Ncells = " << Ncells_tot << ", Nsteps = " << Nsteps_tot << ", Nsteps/Ncells = " << (real_t)Nsteps_tot / Ncells_tot << std::endl;
 
     timers.get("Cooling simple").stop();
   }
