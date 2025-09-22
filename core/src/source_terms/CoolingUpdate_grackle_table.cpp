@@ -383,6 +383,11 @@ namespace dyablo {
       T += delta;
       if (fabs(delta / T) < tol) break;
     }
+    if (iter == max_iter) {
+      // If we didn't converge, just return the last value
+      // (this should be rare)
+      printf("Warning: find_T did not converge after %d iterations, last T = %g K\n", max_iter, T);
+    }
     return T;
   }
 
@@ -618,7 +623,6 @@ public:
 
         real_t Z = 0;
         if constexpr (include_metals) {
-          // Rescale to solar abundance
           Z = Uout.at(iCell, Imetals) / q.rho;
         }
 
