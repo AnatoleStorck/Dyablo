@@ -31,11 +31,10 @@ public:
         }
     }
 
-    template<typename View_t>
+    template<typename View_t,
+            typename = std::enable_if_t<std::is_same_v<typename View_t::array_layout, Kokkos::LayoutRight>>>
     View_t read_dataset(const std::string& varpath)
     {
-        using View_Host_r_t = Kokkos::View<typename View_t::data_type, Kokkos::LayoutRight, Kokkos::HostSpace>;
-
         hid_t hdf5_type = hdf5_type_id<typename View_t::value_type>();
         constexpr hid_t rank = (hid_t)View_t::rank;
 
@@ -48,10 +47,6 @@ public:
 
         hsize_t dims[rank], maxdims[rank];
         H5Sget_simple_extent_dims( filespace, dims, maxdims );
-
-        Kokkos::LayoutLeft layout_file{};
-        for(int i=0; i<rank; i++)
-            layout_file.dimension[rank-1-i] = dims[i];
 
         View_t data_d;
         if constexpr (rank == 1)
@@ -68,20 +63,7 @@ public:
                 H5Dread( dataset, hdf5_type, filespace, filespace, read_properties, data_d.data() );
             #else
                 auto data_h = Kokkos::create_mirror_view( data_d );
-                if constexpr (std::is_same_v<typename View_t::array_layout, Kokkos::LayoutLeft>) {
-                    View_Host_r_t data_h_tmp;
-                    if constexpr (rank == 1)
-                        data_h_tmp = View_Host_r_t(varpath+"_h_right", dims[0]);
-                    else if constexpr (rank == 2)
-                        data_h_tmp = View_Host_r_t(varpath+"_h_right", dims[0], dims[1]);
-                    else if constexpr (rank == 3)
-                        data_h_tmp = View_Host_r_t(varpath+"_h_right", dims[0], dims[1], dims[2]);
-            
-                    H5Dread( dataset, hdf5_type, filespace, filespace, read_properties, data_h_tmp.data() );
-                    Kokkos::deep_copy( data_h, data_h_tmp);
-                } else {
-                    H5Dread( dataset, hdf5_type, filespace, filespace, read_properties, data_h.data() );
-                }
+                H5Dread( dataset, hdf5_type, filespace, filespace, read_properties, data_h.data() );
                 Kokkos::deep_copy( data_d, data_h );
             #endif
             H5Pclose(read_properties);
