@@ -656,14 +656,12 @@ public:
         real_t T = find_T(log_nH, T_over_mu, Z, mutab);
 
         // Do cooling timestep
-        {
-          int Nsteps = 0;
-          real_t Tend = evolve_rosenbrock<include_metals>(
-            nH, log_nH, Z / Zsolar, T, dt_tot_s,
-            Htab, Ctab, mutab, Hmetals_tab, Cmetals_tab,
-            dt_tot_s, Nsteps
-          );
-        }
+        int Nsteps = 0;
+        real_t Tend = evolve_rosenbrock<include_metals>(
+          nH, log_nH, Z / Zsolar, T, dt_tot_s,
+          Htab, Ctab, mutab, Hmetals_tab, Cmetals_tab,
+          dt_tot_s, Nsteps
+        );
 
         // Convert back to pressure
         {
