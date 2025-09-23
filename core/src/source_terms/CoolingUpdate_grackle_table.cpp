@@ -62,10 +62,10 @@ namespace dyablo {
   }
 
   struct GrackleTable {
-    Kokkos::View<real_t***, Kokkos::LayoutRight, Kokkos::HostSpace> data;
-    Kokkos::View<real_t*, Kokkos::HostSpace> log_nH;
-    Kokkos::View<real_t*, Kokkos::HostSpace> redshift;
-    Kokkos::View<real_t*, Kokkos::HostSpace> temperature;
+    Kokkos::View<real_t***, Kokkos::LayoutRight> data;
+    Kokkos::View<real_t*> log_nH;
+    Kokkos::View<real_t*> redshift;
+    Kokkos::View<real_t*> temperature;
   };
 
 
@@ -139,25 +139,25 @@ namespace dyablo {
    * @brief 2D table (log_nH, T) with quadratic interpolation on temperature
    */
   struct Table2DQuadT {
-    const Kokkos::View<real_t*> log_nH_grid;  // length NH_points
-    const Kokkos::View<real_t*> T_grid;       // length NT_points
-    const Kokkos::View<real_t**> values;      // shape (NH_points, NT_points)
-    const Kokkos::View<real_t*> log_T_grid;   // length NT_points
+    const Kokkos::View<const real_t*> log_nH_grid;  // length NH_points
+    const Kokkos::View<const real_t*> T_grid;       // length NT_points
+    const Kokkos::View<const real_t*> log_T_grid;   // length NT_points
+    const Kokkos::View<const real_t**> values;      // shape (NH_points, NT_points)
     const size_t NH_points;
     const size_t NT_points;
 
     const real_t log_nH_min, log_nH_max, log_nH_spacing;
     const real_t log_T_min, log_T_max, log_T_spacing;
 
-    Table2DQuadT( Kokkos::View<real_t*> log_nH_grid,
+    Table2DQuadT( const Kokkos::View<const real_t*>& log_nH_grid,
                   const real_t log_nH_min, const real_t log_nH_max, const real_t log_nH_spacing,
-                  Kokkos::View<real_t*> T_grid,
+                  const Kokkos::View<const real_t*>& T_grid, const Kokkos::View<const real_t*>& log_T_grid,
                   const real_t log_T_min, const real_t log_T_max, const real_t log_T_spacing,
-                  Kokkos::View<real_t**> values )
+                  const Kokkos::View<const real_t**>& values )
       : log_nH_grid  ( log_nH_grid ),
         T_grid       ( T_grid ),
+        log_T_grid   ( log_T_grid ),
         values       ( values ),
-        log_T_grid   ( compute_log10(T_grid) ),
         NH_points    ( log_nH_grid.extent(0) ),
         NT_points    ( T_grid.extent(0) ),
         log_nH_min   ( log_nH_min ),
@@ -166,10 +166,7 @@ namespace dyablo {
         log_T_min     ( log_T_min ),
         log_T_max     ( log_T_max ),
         log_T_spacing ( log_T_spacing )
-      {
-        check_spacing(this->log_nH_grid, log_nH_spacing, "log_nH");
-        check_spacing(this->log_T_grid, log_T_spacing, "log_T");
-      }
+      { }
 
     /***
      * @brief Find the three indices along the T dimension for quadratic interpolation
@@ -434,6 +431,9 @@ private:
   GrackleTable C, H, mu;
   GrackleTable C_metals, H_metals;
 
+  Kokkos::View<real_t*> log_nH_grid_d, redshift_grid_d, T_grid_d, log_T_grid_d;
+  Kokkos::View<real_t*, Kokkos::HostSpace> log_nH_grid_h, redshift_grid_h, T_grid_h, log_T_grid_h;
+
 public:
   SourceUpdate_cooling_grackle_table(
         ConfigMap& configMap,
@@ -459,6 +459,25 @@ public:
     // Close HDF5 file
     H5Fclose(m_hdf5_file);
     m_hdf5_file = 0;
+
+    // Keep axes copy in host and device memory
+    log_nH_grid_d = this->C.log_nH;
+    redshift_grid_d = this->C.redshift;
+    T_grid_d = this->C.temperature;
+    log_T_grid_d = compute_log10(this->C.temperature);
+
+    log_nH_grid_h = Kokkos::create_mirror_view(log_nH_grid_d);
+    Kokkos::deep_copy(log_nH_grid_h, log_nH_grid_d);
+    redshift_grid_h = Kokkos::create_mirror_view(redshift_grid_d);
+    Kokkos::deep_copy(redshift_grid_h, redshift_grid_d);
+    T_grid_h = Kokkos::create_mirror_view(T_grid_d);
+    Kokkos::deep_copy(T_grid_h, T_grid_d);
+    log_T_grid_h = Kokkos::create_mirror_view(log_T_grid_d);
+    Kokkos::deep_copy(log_T_grid_h, log_T_grid_d);
+
+    // Verify spacing
+    check_spacing(log_nH_grid_d, log_nH_grid_h(1) - log_nH_grid_h(0), "log_nH");
+    check_spacing(log_T_grid_d,  log_T_grid_h(1)  - log_T_grid_h(0),  "log_T");
   }
 
   ~SourceUpdate_cooling_grackle_table() {}
@@ -512,22 +531,31 @@ public:
       adims_temperature[0] == dims[2], "Error reading cooling table: " + name + " Parameter3 size mismatch"
     )
 
-    // Allocate memory
-    GrackleTable table;
     // We NEED a LayoutRight here because we read data in C order from HDF5
-    table.data = Kokkos::View<real_t***, Kokkos::LayoutRight, Kokkos::HostSpace>(name, dims[0], dims[1], dims[2]);
-    table.log_nH = Kokkos::View<real_t*, Kokkos::HostSpace>("log_nH", adims_nH[0]);
-    table.redshift = Kokkos::View<real_t*, Kokkos::HostSpace>("redshift", adims_redshift[0]);
-    table.temperature = Kokkos::View<real_t*, Kokkos::HostSpace>("temperature", adims_temperature[0]);
+    GrackleTable table;
+    table.data = Kokkos::View<real_t***, Kokkos::LayoutRight>(name, dims[0], dims[1], dims[2]);
+    table.log_nH = Kokkos::View<real_t*>("log_nH", adims_nH[0]);
+    table.redshift = Kokkos::View<real_t*>("redshift", adims_redshift[0]);
+    table.temperature = Kokkos::View<real_t*>("temperature", adims_temperature[0]);
 
-    status = H5Dread(dataset, hdf5_type, filespace, filespace, read_properties, table.data.data());
+    auto data_h = Kokkos::create_mirror_view(table.data);
+    auto log_nH_h = Kokkos::create_mirror_view(table.log_nH);
+    auto redshift_h = Kokkos::create_mirror_view(table.redshift);
+    auto temperature_h = Kokkos::create_mirror_view(table.temperature);
+
+    status = H5Dread(dataset, hdf5_type, filespace, filespace, read_properties, data_h.data());
     if (status != 0) throw std::runtime_error("Error reading cooling table (data): " + name);
-    status = status, H5Aread(attr_nH, atype_nH, table.log_nH.data());
+    status = status, H5Aread(attr_nH, atype_nH, log_nH_h.data());
     if (status != 0) throw std::runtime_error("Error reading cooling table (log_nH): " + name);
-    status = H5Aread(attr_redshift, atype_redshift, table.redshift.data());
+    status = H5Aread(attr_redshift, atype_redshift, redshift_h.data());
     if (status != 0) throw std::runtime_error("Error reading cooling table (redshift): " + name);
-    status = H5Aread(attr_temperature, atype_temperature, table.temperature.data());
+    status = H5Aread(attr_temperature, atype_temperature, temperature_h.data());
     if (status != 0) throw std::runtime_error("Error reading cooling table (temperature): " + name);
+
+    Kokkos::deep_copy(table.data, data_h);
+    Kokkos::deep_copy(table.log_nH, log_nH_h);
+    Kokkos::deep_copy(table.redshift, redshift_h);
+    Kokkos::deep_copy(table.temperature, temperature_h);
 
     return table;
   }
@@ -566,50 +594,49 @@ public:
     // Interpolate on redshift space
     size_t iz;
     real_t fz;
-    get_index(CTable.redshift, redshift, iz, fz);
+    get_index(this->redshift_grid_h, redshift, iz, fz);
 
-    // Lambda to combine redshift slabs and push to device
-    auto combine_slabs = [=]( const Kokkos::View<real_t***, Kokkos::HostSpace>& table_h, const std::string& name ) -> Kokkos::View<real_t**> {
-      // Copy a slab of thickness 2 around iz from host to device
-      Kokkos::View<real_t**> slab_d(name + "_slab_device", table_h.extent(0), table_h.extent(2));
-      auto slab_h = Kokkos::create_mirror_view(slab_d);
+    size_t NnH = CTable.log_nH.extent(0);
+    size_t NT = CTable.temperature.extent(0);
 
-      Kokkos::parallel_for("combine_slabs", Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>(0, table_h.extent(0) * table_h.extent(2)),
-      KOKKOS_LAMBDA(const size_t idx) {
-        size_t i = idx / table_h.extent(2);
-        size_t j = idx % table_h.extent(2);
-        slab_h(i, j) = (1 - fz) * table_h(i, iz, j) + fz * table_h(i, iz + 1, j);
+    auto Htab_slab = Kokkos::View<real_t**>("Hz", NnH, NT);
+    auto Ctab_slab = Kokkos::View<real_t**>("Cz", NnH, NT);
+    auto mutab_slab = Kokkos::View<real_t**>("muz", NnH, NT);
+    auto Hmetals_slab = Kokkos::View<real_t**>("Hmetalsz", NnH, NT);
+    auto Cmetals_slab = Kokkos::View<real_t**>("Cmetalsz", NnH, NT);
+
+    real_t fz1 = 1 - fz;
+    Kokkos::parallel_for("interp_z", Kokkos::MDRangePolicy({0, 0}, {NnH, NT}),
+      KOKKOS_LAMBDA(const size_t i, const size_t j) {
+        Htab_slab(i, j)  = fz1 * HTable.data(i, iz, j)  + fz * HTable.data(i, iz + 1, j);
+        Ctab_slab(i, j)  = fz1 * CTable.data(i, iz, j)  + fz * CTable.data(i, iz + 1, j);
+        mutab_slab(i, j) = fz1 * muTable.data(i, iz, j) + fz * muTable.data(i, iz + 1, j);
+        if (include_metals) {
+          Hmetals_slab(i, j) = fz1 * HMetals_Table.data(i, iz, j) + fz * HMetals_Table.data(i, iz + 1, j);
+          Cmetals_slab(i, j) = fz1 * CMetals_Table.data(i, iz, j) + fz * CMetals_Table.data(i, iz + 1, j);
+        }
       });
 
-      // Copy interpolated slab to device
-      Kokkos::deep_copy(slab_d, slab_h);
-      return slab_d;
+    // Create 2D interpolation table objects
+    auto create_tab = [=]( const Kokkos::View<const real_t**>& array2D ) {
+      real_t log_nH_spacing = log_nH_grid_h(1) - log_nH_grid_h(0),
+            log_nH_min = log_nH_grid_h(0),
+            log_nH_max = log_nH_grid_h(log_nH_grid_h.extent(0)-1);
+      real_t log_T_spacing = log_T_grid_h(1) - log_T_grid_h(0),
+            log_T_min = log_T_grid_h(0),
+            log_T_max = log_T_grid_h(log_T_grid_h.extent(0)-1);
+
+      return Table2DQuadT(
+        log_nH_grid_d,          log_nH_min, log_nH_max, log_nH_spacing,
+        T_grid_d, log_T_grid_d, log_T_min,  log_T_max,  log_T_spacing,
+        array2D
+      );
     };
-
-    auto Hz = combine_slabs(HTable.data, "heating_rate");
-    auto Cz = combine_slabs(CTable.data, "cooling_rate");
-    auto muz = combine_slabs(muTable.data, "mu_table");
-    auto Hz_metals = combine_slabs(HMetals_Table.data, "metal_heating_rate");
-    auto Cz_metals = combine_slabs(CMetals_Table.data, "metal_cooling_rate");
-
-    Kokkos::View<real_t*> log_nH_d("log_nH", CTable.log_nH.extent(0));
-    Kokkos::View<real_t*> temperature_d("temperature", CTable.temperature.extent(0));
-    Kokkos::deep_copy(log_nH_d, CTable.log_nH);
-    Kokkos::deep_copy(temperature_d, CTable.temperature);
-
-    real_t log_nH_min = CTable.log_nH(0), log_nH_max = CTable.log_nH(CTable.log_nH.extent(0)-1);
-    real_t log_T_min  = log10(CTable.temperature(0)), log_T_max = log10(CTable.temperature(CTable.temperature.extent(0)-1));
-
-    real_t log_nH_spacing = CTable.log_nH(1) - CTable.log_nH(0);
-    real_t log_T_spacing  = log10(CTable.temperature(1)) - log10(CTable.temperature(0));
-
-    DYABLO_ASSERT_HOST_RELEASE(std::isnormal(log_nH_spacing) && std::isnormal(log_T_spacing), "Error: Cooling table have abnormal spacing.");
-
-    Table2DQuadT Htab = Table2DQuadT(log_nH_d, log_nH_min, log_nH_max, log_nH_spacing, temperature_d, log_T_min, log_T_max, log_T_spacing, Hz);
-    Table2DQuadT Ctab = Table2DQuadT(log_nH_d, log_nH_min, log_nH_max, log_nH_spacing, temperature_d, log_T_min, log_T_max, log_T_spacing, Cz);
-    Table2DQuadT mutab = Table2DQuadT(log_nH_d, log_nH_min, log_nH_max, log_nH_spacing, temperature_d, log_T_min, log_T_max, log_T_spacing, muz);
-    Table2DQuadT Hmetals_tab = Table2DQuadT(log_nH_d, log_nH_min, log_nH_max, log_nH_spacing, temperature_d, log_T_min, log_T_max, log_T_spacing, Hz_metals);
-    Table2DQuadT Cmetals_tab = Table2DQuadT(log_nH_d, log_nH_min, log_nH_max, log_nH_spacing, temperature_d, log_T_min, log_T_max, log_T_spacing, Cz_metals);
+    const auto &Htab = create_tab(Htab_slab);
+    const auto &Ctab = create_tab(Ctab_slab);
+    const auto &mutab = create_tab(mutab_slab);
+    const auto &Hmetals_tab = create_tab(Hmetals_slab);
+    const auto &Cmetals_tab = create_tab(Cmetals_slab);
 
     // ----------------------------------------------------------
     // Cooling timeloop
