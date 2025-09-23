@@ -430,8 +430,8 @@ private:
   std::string cooling_table;
   real_t Zsolar;
 
-  Kokkos::View<real_t***> C, H, mu;
-  Kokkos::View<real_t***> C_metals, H_metals;
+  Kokkos::View<real_t***, Kokkos::LayoutRight> C, H, mu;
+  Kokkos::View<real_t***, Kokkos::LayoutRight> C_metals, H_metals;
 
   Kokkos::View<real_t*> log_nH_grid_d, redshift_grid_d, T_grid_d, log_T_grid_d;
   Kokkos::View<real_t*, Kokkos::HostSpace> log_nH_grid_h, redshift_grid_h, T_grid_h, log_T_grid_h;
@@ -448,7 +448,7 @@ public:
     Zsolar(configMap.getValue<real_t>("cooling", "Zsolar", 0.014))
   {
     {
-      using Arr3d = Kokkos::View<real_t***>;
+      using Arr3d = Kokkos::View<real_t***, Kokkos::LayoutRight>;
       using Arr1d = Kokkos::View<real_t*>;
       HDF5ViewReader reader(cooling_table);
       C = reader.read_dataset<Arr3d>("CoolingRates/Primordial/Cooling");
