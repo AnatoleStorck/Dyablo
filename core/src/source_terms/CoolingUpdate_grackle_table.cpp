@@ -6,6 +6,8 @@
 #include <hdf5.h>
 #include <hdf5_hl.h>
 
+#include "utils/io/HDF5ViewReader.h"
+
 namespace dyablo {
 
   namespace {
@@ -428,8 +430,8 @@ private:
   std::string cooling_table;
   real_t Zsolar;
 
-  GrackleTable C, H, mu;
-  GrackleTable C_metals, H_metals;
+  Kokkos::View<real_t***> C, H, mu;
+  Kokkos::View<real_t***> C_metals, H_metals;
 
   Kokkos::View<real_t*> log_nH_grid_d, redshift_grid_d, T_grid_d, log_T_grid_d;
   Kokkos::View<real_t*, Kokkos::HostSpace> log_nH_grid_h, redshift_grid_h, T_grid_h, log_T_grid_h;
@@ -445,34 +447,31 @@ public:
     cooling_table(configMap.getValue<std::string>("cooling", "grackle_table")),
     Zsolar(configMap.getValue<real_t>("cooling", "Zsolar", 0.014))
   {
-    // Open the cooling table
-    hid_t m_hdf5_file;
-    m_hdf5_file = H5Fopen(cooling_table.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    {
+      using Arr3d = Kokkos::View<real_t***>;
+      using Arr1d = Kokkos::View<real_t*>;
+      HDF5ViewReader reader(cooling_table);
+      C = reader.read_dataset<Arr3d>("CoolingRates/Primordial/Cooling");
+      H = reader.read_dataset<Arr3d>("CoolingRates/Primordial/Heating");
+      mu = reader.read_dataset<Arr3d>("CoolingRates/Primordial/MMW");
+      C_metals = reader.read_dataset<Arr3d>("CoolingRates/Metals/Cooling");
+      H_metals = reader.read_dataset<Arr3d>("CoolingRates/Metals/Heating");
 
-    // Read cooling tables
-    this->C = readTable(m_hdf5_file, "CoolingRates/Primordial/Cooling");
-    this->H = readTable(m_hdf5_file, "CoolingRates/Primordial/Heating");
-    this->mu = readTable(m_hdf5_file, "CoolingRates/Primordial/MMW");
-    this->C_metals = readTable(m_hdf5_file, "CoolingRates/Metals/Cooling");
-    this->H_metals = readTable(m_hdf5_file, "CoolingRates/Metals/Heating");
+      log_nH_grid_d = reader.read_attr<Arr1d>("CoolingRates/Primordial/MMW", "Parameter1");
+      redshift_grid_d = reader.read_attr<Arr1d>("CoolingRates/Primordial/MMW", "Parameter2");
+      T_grid_d = reader.read_attr<Arr1d>("CoolingRates/Primordial/MMW", "Temperature");
+    }
 
-    // Close HDF5 file
-    H5Fclose(m_hdf5_file);
-    m_hdf5_file = 0;
-
-    // Keep axes copy in host and device memory
-    log_nH_grid_d = this->C.log_nH;
-    redshift_grid_d = this->C.redshift;
-    T_grid_d = this->C.temperature;
-    log_T_grid_d = compute_log10(this->C.temperature);
-
+    log_T_grid_d = compute_log10(T_grid_d);
+    
     log_nH_grid_h = Kokkos::create_mirror_view(log_nH_grid_d);
-    Kokkos::deep_copy(log_nH_grid_h, log_nH_grid_d);
     redshift_grid_h = Kokkos::create_mirror_view(redshift_grid_d);
-    Kokkos::deep_copy(redshift_grid_h, redshift_grid_d);
     T_grid_h = Kokkos::create_mirror_view(T_grid_d);
-    Kokkos::deep_copy(T_grid_h, T_grid_d);
     log_T_grid_h = Kokkos::create_mirror_view(log_T_grid_d);
+    
+    Kokkos::deep_copy(log_nH_grid_h, log_nH_grid_d);
+    Kokkos::deep_copy(redshift_grid_h, redshift_grid_d);
+    Kokkos::deep_copy(T_grid_h, T_grid_d);
     Kokkos::deep_copy(log_T_grid_h, log_T_grid_d);
 
     // Verify spacing
@@ -481,84 +480,6 @@ public:
   }
 
   ~SourceUpdate_cooling_grackle_table() {}
-
-  /**
-   * Read a grackle table from an HDF5 file
-   */
-  GrackleTable readTable( const hid_t m_hdf5_file, const std::string& name )
-  {
-    herr_t status;
-
-    hid_t hdf5_type = H5T_NATIVE_DOUBLE;
-    hsize_t dims[3];
-
-    hid_t dataset_properties = H5Pcreate(H5P_DATASET_ACCESS);
-    hid_t dataset = H5Dopen2(m_hdf5_file, name.c_str(), dataset_properties);
-    hid_t filespace = H5Dget_space(dataset);
-
-    H5Sget_simple_extent_dims(filespace, dims, NULL);
-
-    hid_t read_properties = H5Pcreate(H5P_DATASET_XFER);
-
-    // Read "Parameter1" (array of Hydrogen densities)
-    hid_t attr_nH = H5Aopen(dataset, "Parameter1", H5P_DEFAULT);
-    hsize_t adims_nH[1];
-    hid_t atype_nH = H5Aget_type(attr_nH);
-    hid_t aspace = H5Aget_space(attr_nH);
-    H5Sget_simple_extent_dims(aspace, adims_nH, NULL);
-    if (adims_nH[0] != dims[0])
-    DYABLO_ASSERT_HOST_RELEASE(
-      adims_nH[0] == dims[0], "Error reading cooling table: " + name + " Parameter1 size mismatch"
-    )
-
-    // Read "Parameter2" (array of redshifts)
-    hid_t attr_redshift = H5Aopen(dataset, "Parameter2", H5P_DEFAULT);
-    hsize_t adims_redshift[1];
-    hid_t atype_redshift = H5Aget_type(attr_redshift);
-    aspace = H5Aget_space(attr_redshift);
-    H5Sget_simple_extent_dims(aspace, adims_redshift, NULL);
-    DYABLO_ASSERT_HOST_RELEASE(
-      adims_redshift[0] == dims[1], "Error reading cooling table: " + name + " Parameter2 size mismatch"
-    )
-
-    // Read "Temperature" (array of temperatures)
-    hid_t attr_temperature = H5Aopen(dataset, "Temperature", H5P_DEFAULT);
-    hsize_t adims_temperature[1];
-    hid_t atype_temperature = H5Aget_type(attr_temperature);
-    aspace = H5Aget_space(attr_temperature);
-    H5Sget_simple_extent_dims(aspace, adims_temperature, NULL);
-    DYABLO_ASSERT_HOST_RELEASE(
-      adims_temperature[0] == dims[2], "Error reading cooling table: " + name + " Parameter3 size mismatch"
-    )
-
-    // We NEED a LayoutRight here because we read data in C order from HDF5
-    GrackleTable table;
-    table.data = Kokkos::View<real_t***, Kokkos::LayoutRight>(name, dims[0], dims[1], dims[2]);
-    table.log_nH = Kokkos::View<real_t*>("log_nH", adims_nH[0]);
-    table.redshift = Kokkos::View<real_t*>("redshift", adims_redshift[0]);
-    table.temperature = Kokkos::View<real_t*>("temperature", adims_temperature[0]);
-
-    auto data_h = Kokkos::create_mirror_view(table.data);
-    auto log_nH_h = Kokkos::create_mirror_view(table.log_nH);
-    auto redshift_h = Kokkos::create_mirror_view(table.redshift);
-    auto temperature_h = Kokkos::create_mirror_view(table.temperature);
-
-    status = H5Dread(dataset, hdf5_type, filespace, filespace, read_properties, data_h.data());
-    if (status != 0) throw std::runtime_error("Error reading cooling table (data): " + name);
-    status = status, H5Aread(attr_nH, atype_nH, log_nH_h.data());
-    if (status != 0) throw std::runtime_error("Error reading cooling table (log_nH): " + name);
-    status = H5Aread(attr_redshift, atype_redshift, redshift_h.data());
-    if (status != 0) throw std::runtime_error("Error reading cooling table (redshift): " + name);
-    status = H5Aread(attr_temperature, atype_temperature, temperature_h.data());
-    if (status != 0) throw std::runtime_error("Error reading cooling table (temperature): " + name);
-
-    Kokkos::deep_copy(table.data, data_h);
-    Kokkos::deep_copy(table.log_nH, log_nH_h);
-    Kokkos::deep_copy(table.redshift, redshift_h);
-    Kokkos::deep_copy(table.temperature, temperature_h);
-
-    return table;
-  }
 
   template<int ndim, bool include_metals>
   void update_aux( UserData& U,
@@ -596,8 +517,8 @@ public:
     real_t fz;
     get_index(this->redshift_grid_h, redshift, iz, fz);
 
-    size_t NnH = CTable.log_nH.extent(0);
-    size_t NT = CTable.temperature.extent(0);
+    size_t NnH = this->log_nH_grid_h.extent(0);
+    size_t NT = this->T_grid_h.extent(0);
 
     auto Htab_slab = Kokkos::View<real_t**>("Hz", NnH, NT);
     auto Ctab_slab = Kokkos::View<real_t**>("Cz", NnH, NT);
@@ -608,12 +529,12 @@ public:
     real_t fz1 = 1 - fz;
     Kokkos::parallel_for("interp_z", Kokkos::MDRangePolicy({0, 0}, {NnH, NT}),
       KOKKOS_LAMBDA(const size_t i, const size_t j) {
-        Htab_slab(i, j)  = fz1 * HTable.data(i, iz, j)  + fz * HTable.data(i, iz + 1, j);
-        Ctab_slab(i, j)  = fz1 * CTable.data(i, iz, j)  + fz * CTable.data(i, iz + 1, j);
-        mutab_slab(i, j) = fz1 * muTable.data(i, iz, j) + fz * muTable.data(i, iz + 1, j);
+        Htab_slab(i, j)  = fz1 * HTable(i, iz, j)  + fz * HTable(i, iz + 1, j);
+        Ctab_slab(i, j)  = fz1 * CTable(i, iz, j)  + fz * CTable(i, iz + 1, j);
+        mutab_slab(i, j) = fz1 * muTable(i, iz, j) + fz * muTable(i, iz + 1, j);
         if (include_metals) {
-          Hmetals_slab(i, j) = fz1 * HMetals_Table.data(i, iz, j) + fz * HMetals_Table.data(i, iz + 1, j);
-          Cmetals_slab(i, j) = fz1 * CMetals_Table.data(i, iz, j) + fz * CMetals_Table.data(i, iz + 1, j);
+          Hmetals_slab(i, j) = fz1 * HMetals_Table(i, iz, j) + fz * HMetals_Table(i, iz + 1, j);
+          Cmetals_slab(i, j) = fz1 * CMetals_Table(i, iz, j) + fz * CMetals_Table(i, iz + 1, j);
         }
       });
 
