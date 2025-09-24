@@ -16,21 +16,26 @@ public:
           Timers& timers) 
   : foreach_cell(foreach_cell),
     foreach_particle(foreach_cell.get_amr_mesh(), configMap),
-    timers(timers)
+    timers(timers),
+    parr_names( configMap.getValue<std::vector<std::string>>("particles", "density_projected_arrays", {"particles"}))
   {}
 
   ~ParticleUpdate_CIC_density() {}
 
   void update( UserData& U, ScalarSimulationData& scalar_data ) 
   {
-    if( foreach_cell.getDim() == 2 )
-      update_aux<2>(U, scalar_data);
-    else
-      update_aux<3>(U, scalar_data);
+    for (auto & pname : parr_names)
+    {
+      if (!U.has_ParticleArray(pname)) continue;
+      if( foreach_cell.getDim() == 2 )
+        update_aux<2>(U, scalar_data, pname);
+      else
+        update_aux<3>(U, scalar_data, pname);
+    }
   }
 
   template< int ndim>
-  void update_aux( UserData& U, ScalarSimulationData& scalar_data ) 
+  void update_aux( UserData& U, ScalarSimulationData& scalar_data, const std::string& particle_array_name ) 
   {
     timers.get("ParticleUpdate_CIC_density").start();
 
@@ -42,8 +47,8 @@ public:
     };
 
     auto Uin = U.getAccessor( {{"rho", IRho}, {"rho_g", IRhoG}} );
-    const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( "particles" );
-    UserData::ParticleAccessor Pdata = U.getParticleAccessor( "particles", {{"mass", IMass}} );
+    const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( particle_array_name );
+    UserData::ParticleAccessor Pdata = U.getParticleAccessor( particle_array_name, {{"mass", IMass}} );
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
@@ -141,6 +146,8 @@ private:
   ForeachCell& foreach_cell;
   ForeachParticle foreach_particle;
   Timers& timers;  
+
+  std::vector<std::string> parr_names;
 };
 
 } // namespace dyablo

@@ -9,19 +9,20 @@
 namespace dyablo{
 
 template< typename T >
-inline hid_t hdf5_type_id() 
+inline hid_t hdf5_type_id()
 {
   static_assert( !std::is_same_v<T,T>, "Unknown type" );
   return 0;
 }
-template<> inline hid_t hdf5_type_id<float>   (){ return H5T_NATIVE_FLOAT; } 
-template<> inline hid_t hdf5_type_id<double>  (){ return H5T_NATIVE_DOUBLE; } 
-template<> inline hid_t hdf5_type_id<uint16_t>(){ return H5T_NATIVE_UINT16; } 
-template<> inline hid_t hdf5_type_id<uint32_t>(){ return H5T_NATIVE_UINT32; } 
+template<> inline hid_t hdf5_type_id<bool>    (){ return H5T_NATIVE_HBOOL; }
+template<> inline hid_t hdf5_type_id<float>   (){ return H5T_NATIVE_FLOAT; }
+template<> inline hid_t hdf5_type_id<double>  (){ return H5T_NATIVE_DOUBLE; }
+template<> inline hid_t hdf5_type_id<uint16_t>(){ return H5T_NATIVE_UINT16; }
+template<> inline hid_t hdf5_type_id<uint32_t>(){ return H5T_NATIVE_UINT32; }
 template<> inline hid_t hdf5_type_id<uint64_t>(){ return H5T_NATIVE_UINT64; }
-template<> inline hid_t hdf5_type_id<int16_t> (){ return H5T_NATIVE_INT16; } 
-template<> inline hid_t hdf5_type_id<int32_t> (){ return H5T_NATIVE_INT32; } 
-template<> inline hid_t hdf5_type_id<int64_t> (){ return H5T_NATIVE_INT64; } 
+template<> inline hid_t hdf5_type_id<int16_t> (){ return H5T_NATIVE_INT16; }
+template<> inline hid_t hdf5_type_id<int32_t> (){ return H5T_NATIVE_INT32; }
+template<> inline hid_t hdf5_type_id<int64_t> (){ return H5T_NATIVE_INT64; }
 
 class HDF5ViewWriter{
 
@@ -64,7 +65,7 @@ public:
     std::string varname;
     {
       auto slash_pos = varpath.find_last_of('/');
-      
+
       std::string group_path;
       if( slash_pos != std::string::npos )
       {
@@ -83,7 +84,7 @@ public:
     hid_t attr = H5Acreate2(group_id, varname.c_str(), type_id, filespace, dataset, H5P_DEFAULT);
 
     H5Awrite( attr, type_id, &value );
-  
+
     H5Aclose(attr);
     H5Gclose(group_id);
     H5Pclose(dataset);
@@ -111,13 +112,13 @@ public:
    * Write collectively the content of the view `data` into the dataset names after `name`
    * @tparam a Kokkos::View with LayoutLeft
    * @param varpath the name in the dataset inside the HDF5 file
-   * @param data a Kokkos::View containing the data to write every extent should be identical on 
+   * @param data a Kokkos::View containing the data to write every extent should be identical on
    *             every MPI process, except the last one. Data will be written contiguously for each MPI process.
    * @param global_extent cumulated values for each process for the last extent
-   * @param first_global_index start value for the last extent of current process 
+   * @param first_global_index start value for the last extent of current process
    **/
   template< typename View_t >
-  void collective_write_hint( const std::string& varpath, const View_t& data, 
+  void collective_write_hint( const std::string& varpath, const View_t& data,
                          uint64_t global_extent, uint64_t first_global_index )
   {
     static_assert( std::is_same_v< typename View_t::array_layout, Kokkos::LayoutLeft >, "View is not LayoutLeft" );
@@ -147,12 +148,12 @@ public:
       filespace = H5Screate_simple(view_rank, global_extents.data(), nullptr);
       H5Sselect_hyperslab(filespace, H5S_SELECT_SET, first_global_indexes.data(), nullptr, local_extents.data(), nullptr);
     }
-    
+
     hid_t group_id;
     std::string varname;
     {
       auto slash_pos = varpath.find_last_of('/');
-      
+
       std::string group_path;
       if( slash_pos != std::string::npos )
       {
@@ -219,7 +220,7 @@ private:
         group_id = H5Gcreate(group_id, group_name.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
       else // Group exists
         group_id = H5Gopen(group_id, group_name.c_str(), H5P_DEFAULT);
-      
+
       if( group_id_old != m_hdf5_file )
         H5Gclose(group_id_old);
     }
