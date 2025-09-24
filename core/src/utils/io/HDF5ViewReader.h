@@ -34,7 +34,8 @@ public:
     template<typename View_t>
     View_t read_dataset(const std::string& varpath)
     {
-        static_assert(std::is_same_v<typename View_t::array_layout, Kokkos::LayoutRight>, "View is not LayoutLeft");
+        static_assert(std::is_same_v<typename View_t::array_layout, Kokkos::LayoutRight> || (View_t::rank == 1), "View is not LayoutRight or 1D");
+        static_assert(View_t::rank <= 3, "Only rank 1, 2 and 3 views are supported");
 
         hid_t hdf5_type = hdf5_type_id<typename View_t::value_type>();
         constexpr hid_t rank = (hid_t)View_t::rank;
@@ -80,6 +81,9 @@ public:
     template< typename View_t >
     View_t read_attr( const std::string& varpath, const std::string& attrname )
     {
+        static_assert(std::is_same_v<typename View_t::array_layout, Kokkos::LayoutRight> || (View_t::rank == 1), "View is not LayoutRight or 1D");
+        static_assert(View_t::rank <= 3, "Only rank 1, 2 and 3 views are supported");
+
         hsize_t dims[View_t::rank];
         hid_t type_id = hdf5_type_id<typename View_t::value_type>();
 
