@@ -384,7 +384,7 @@ namespace dyablo {
   real_t find_T( const real_t log_nH, const real_t T_over_mu, const real_t Z, const Table2DQuadT& mutab ){
     int max_iter = 20;
     real_t tol = 1e-6;
-    real_t T = T_over_mu; // initial guess
+    real_t T = T_over_mu * mutab.interp(log_nH, T_over_mu, log10(T_over_mu)); // initial guess
     int iter = 0;
     for (iter = 0; iter < max_iter; ++iter) {
       real_t log_T = log10(T);
