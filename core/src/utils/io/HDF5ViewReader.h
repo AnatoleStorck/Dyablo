@@ -31,10 +31,11 @@ public:
         }
     }
 
-    template<typename View_t,
-            typename = std::enable_if_t<std::is_same_v<typename View_t::array_layout, Kokkos::LayoutRight>>>
+    template<typename View_t>
     View_t read_dataset(const std::string& varpath)
     {
+        static_assert(std::is_same_v<typename View_t::array_layout, Kokkos::LayoutRight>, "View is not LayoutLeft");
+
         hid_t hdf5_type = hdf5_type_id<typename View_t::value_type>();
         constexpr hid_t rank = (hid_t)View_t::rank;
 
