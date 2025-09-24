@@ -82,6 +82,7 @@ set( ic_src
     ${CMAKE_CURRENT_SOURCE_DIR}/passive_scalars/PassiveScalar_IC_uniform.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/passive_scalars/PassiveScalar_IC_kelvin_helmholtz.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/init/rt/InitialConditions_stromgren.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/init/InitialConditions_gadget.cpp
 )
 
 set( mpi_src

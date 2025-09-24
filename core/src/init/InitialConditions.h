@@ -47,6 +47,9 @@ class InitialConditions_stromgren;
 class AnalyticalFormula_C91;
 class AnalyticalFormula_tri_layer;
 
+// Other code format
+class InitialConditions_gadget;
+
 
 } // namespace dyablo
 
@@ -97,6 +100,8 @@ bool dyablo::InitialConditionsFactory::init()
   // Solar physics
   DECLARE_REGISTERED( dyablo::InitialConditions_analytical<dyablo::AnalyticalFormula_C91> );
   DECLARE_REGISTERED( dyablo::InitialConditions_analytical<dyablo::AnalyticalFormula_tri_layer> );
+
+  DECLARE_REGISTERED( dyablo::InitialConditions_gadget );
 
   return true;
 }
