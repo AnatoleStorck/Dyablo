@@ -87,9 +87,12 @@ public:
         hsize_t dims[View_t::rank];
         hid_t type_id = hdf5_type_id<typename View_t::value_type>();
 
-        hid_t dataset = H5Dopen2(m_hdf5_file, varpath.c_str(), H5P_DEFAULT);
+        hid_t obj = H5Oopen(m_hdf5_file, varpath.c_str(), H5P_DEFAULT);
+        DYABLO_ASSERT_HOST_RELEASE(obj >= 0, "Failed to open object " << varpath);
 
-        hid_t attr = H5Aopen(dataset, attrname.c_str(), H5P_DEFAULT);
+        hid_t attr = H5Aopen(obj, attrname.c_str(), H5P_DEFAULT);
+        DYABLO_ASSERT_HOST_RELEASE(attr >= 0, "Failed to open attribute " << attrname << " from " << varpath);
+
         hid_t aspace = H5Aget_space(attr);
         H5Sget_simple_extent_dims(aspace, dims, NULL);
 
@@ -114,7 +117,7 @@ public:
         DYABLO_ASSERT_HOST_RELEASE( status == 0, "hdf5 error : reading attribute " << attrname << " from " << varpath );
         H5Sclose(aspace);
         H5Aclose(attr);
-        H5Dclose(dataset);
+        H5Oclose(obj);
 
         return data_d;
     }
