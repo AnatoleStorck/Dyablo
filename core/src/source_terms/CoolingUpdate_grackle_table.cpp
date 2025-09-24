@@ -1,10 +1,8 @@
 // #include "CoolingUpdate_base.h"
 #include "utils/units/Units.h"
 #include "SourceUpdate_base.h"
-#include "states/State_hydro.h"
-
-#include <hdf5.h>
-#include <hdf5_hl.h>
+#include "hyperbolic/policy/HyperbolicPolicy_Hydro.h"
+#include "hyperbolic/policy/HyperbolicPolicy_GLMMHD.h"
 
 #include "utils/io/HDF5ViewReader.h"
 
@@ -409,24 +407,28 @@ namespace dyablo {
     return T;
   }
 
-
-  enum VarIndex_Cooling {Irho, IE_tot, Irho_vx, Irho_vy, Irho_vz, Imetals};
 }
 
 
 /**
  * @brief Cooling function using grackle-format cooling tables.
  */
-
+template< typename Policy >
 class SourceUpdate_cooling_grackle_table : public SourceUpdate
 {
+  static_assert( is_HyperbolicPolicy_v<Policy>,
+   "Policy must be wrapped in HyperbolicPolicy_base");
+
+public:
+  using PrimState = typename Policy::PrimState;
+  using ConsState = typename Policy::ConsState;
+
 private:
   ForeachCell& foreach_cell;
   Timers& timers;
-  real_t gamma0;
-  real_t smallr;
-  real_t smallc;
-  real_t smallp;
+
+  typename Policy::Params policy_params;
+
   std::string cooling_table;
   real_t Zsolar;
 
@@ -443,7 +445,7 @@ public:
         Timers& timers )
   : foreach_cell(foreach_cell),
     timers(timers),
-    gamma0(configMap.getValue<real_t>("hydro", "gamma", 5.0/3.0)),
+    policy_params(Policy::getParams(configMap)),
     cooling_table(configMap.getValue<std::string>("cooling", "grackle_table")),
     Zsolar(configMap.getValue<real_t>("cooling", "Zsolar", 0.014))
   {
@@ -463,12 +465,12 @@ public:
     }
 
     log_T_grid_d = compute_log10(T_grid_d);
-    
+
     log_nH_grid_h = Kokkos::create_mirror_view(log_nH_grid_d);
     redshift_grid_h = Kokkos::create_mirror_view(redshift_grid_d);
     T_grid_h = Kokkos::create_mirror_view(T_grid_d);
     log_T_grid_h = Kokkos::create_mirror_view(log_T_grid_d);
-    
+
     Kokkos::deep_copy(log_nH_grid_h, log_nH_grid_d);
     Kokkos::deep_copy(redshift_grid_h, redshift_grid_d);
     Kokkos::deep_copy(T_grid_h, T_grid_d);
@@ -479,8 +481,6 @@ public:
     check_spacing(log_T_grid_d,  log_T_grid_h(1)  - log_T_grid_h(0),  "log_T");
   }
 
-  ~SourceUpdate_cooling_grackle_table() {}
-
   template<int ndim, bool include_metals>
   void update_aux( UserData& U,
                    ScalarSimulationData& scalar_data)
@@ -489,18 +489,11 @@ public:
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
     timers.get("Cooling simple").start();
 
-    std::vector<dyablo::UserData_fields::FieldAccessor_FieldInfo> fields_info = {
-      {"rho_next",    Irho},
-      {"e_tot_next",  IE_tot},
-      {"rho_vx_next", Irho_vx},
-      {"rho_vy_next", Irho_vy},
-      {"rho_vz_next", Irho_vz},
-    };
-    if constexpr (include_metals) {
-      fields_info.push_back({"metallicity", Imetals});
-    }
+    const Policy policy( this->policy_params, scalar_data );
 
-    auto Uout = U.getAccessor(fields_info);
+    dyablo::UserData::FieldAccessor Uin = policy.getUout(U);
+    dyablo::UserData::FieldAccessor Umetal;
+    if constexpr (include_metals) Umetal = U.getAccessor({{"metallicity", 0}});
 
     const auto& CTable = this->C;
     const auto& HTable = this->H;
@@ -565,8 +558,6 @@ public:
     const real_t dt_tot_s = (scalar_data.get<real_t>("dt") * code_time).convert_to(Units::s());
     real_t XH = Units::XH().convert_to(Units::one());
 
-    real_t gamma0 = this->gamma0;
-
     auto mp_per_cc     = Units::PROTON_MASS() / Units::cm3();
     auto mp_over_kb    = Units::PROTON_MASS() / Units::KBOLTZ();
     auto K = Units::Kelvin();
@@ -575,11 +566,10 @@ public:
 
     real_t Zsolar = this->Zsolar;
 
-    foreach_cell.foreach_cell( "Cooling::update", Uout.getShape(),
+    foreach_cell.foreach_cell( "Cooling::update", Uin.getShape(),
       KOKKOS_LAMBDA(const ForeachCell::CellIndex& iCell) {
-        dyablo::ConsHydroState u;
-        dyablo::getConservativeState<ndim>(Uout, iCell, u);
-        PrimHydroState q = dyablo::consToPrim<ndim>(u, gamma0);
+        ConsState u = policy.getConsState(Uin, iCell);
+        PrimState q = policy.consToPrim(u);
 
         // Initial state
         auto rho_physical = Units::supercomoving_to_physical<Units::Density>(q.rho, aexp) * code_density;
@@ -591,8 +581,8 @@ public:
         real_t T_over_mu = (P_physical / rho_physical * mp_over_kb).convert_to(K);
 
         real_t Z = 0;
-        if constexpr (include_metals) {
-          Z = Uout.at(iCell, Imetals) / q.rho;
+        if (include_metals) {
+          Z = Umetal.at_ivar(iCell, 0) / q.rho;
         }
 
         // Newton-Raphson to find T from T/µ
@@ -616,8 +606,8 @@ public:
         q.p = Units::physical_to_supercomoving<Units::Pressure>(P_physical.convert_to(code_pressure), aexp);
 
         // Update state
-        u = dyablo::primToCons<ndim>(q, gamma0);
-        dyablo::setConservativeState<ndim>(Uout, iCell, u);
+        u = policy.primToCons(q);
+        policy.setConsState(Uin, iCell, u);
     });
 
 
@@ -631,11 +621,14 @@ public:
 
     bool has_metals = U.has_field("metallicity");
 
-    if (ndim == 2)
-      throw "2D not implemented";
-    else if (ndim == 3 && has_metals)
+    if (ndim != 3) {
+      // Note: could be extended to 1D/2D, but the equations need
+      // to be modified
+      throw "Cooling is only implemented in 3D.";
+    }
+    if (has_metals)
       update_aux<3, true>(U, scalar_data);
-    else if (ndim == 3 && !has_metals)
+    else
       update_aux<3, false>(U, scalar_data);
   }
 
@@ -644,5 +637,9 @@ public:
 } // namespace dyablo
 
 FACTORY_REGISTER( dyablo::SourceUpdateFactory,
-                  dyablo::SourceUpdate_cooling_grackle_table,
-                  "SourceUpdate_cooling_grackle_table");
+                  dyablo::SourceUpdate_cooling_grackle_table<dyablo::HyperbolicPolicy_Hydro>,
+                  "SourceUpdate_cooling_grackle_table_hydro" );
+
+FACTORY_REGISTER( dyablo::SourceUpdateFactory,
+                  dyablo::SourceUpdate_cooling_grackle_table<dyablo::HyperbolicPolicy_GLMMHD>,
+                  "SourceUpdate_cooling_grackle_table_MHD" );
