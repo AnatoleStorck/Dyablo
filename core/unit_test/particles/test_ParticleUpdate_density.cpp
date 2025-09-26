@@ -182,7 +182,7 @@ INSTANTIATE_TEST_SUITE_P(
     Test_ParticleUpdate_density, Test_ParticleUpdate_density,
     testing::Combine(
         testing::Values(2,3),
-        testing::Values("ParticleUpdate_NGP_density", "ParticleUpdate_CIC_density")
+        testing::Values("ParticleUpdate_NGP_density", "ParticleUpdate_CIC_density", "ParticleUpdate_TSC_density")
     ),
     [](const testing::TestParamInfo<Test_ParticleUpdate_density::ParamType>& info) {
       int ndim = std::get<0>(info.param);
