@@ -56,6 +56,8 @@ run_and_verify test_zeldovitch_particles_dyablo.ini "../../../settings/cosmo/val
 run_and_verify beam.ini "../../../settings/cosmo/validate_beam.py beam_main.xmf 1e-2 ../../../beam/beam.png" beam 
 run_and_verify test_heat_conduction.ini "validate_heat_conduction.py . 0.02 ../../../heat_conduction/heat_conduction.png" heat_conduction
 
+run_and_verify test_star_formation.ini "validate_star_formation.py star_formation_main.xmf 1e-2 ../../../star_formation/star_formation.png" star_formation
+
 echo "${err_count}/${run_count} runs failed"
 
 

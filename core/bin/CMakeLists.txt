@@ -85,3 +85,7 @@ configure_file(../../settings/cosmo/beam.ini beam.ini COPYONLY)
 # Heat conduction
 configure_file(test_heat_conduction.ini test_heat_conduction.ini COPYONLY)
 configure_file(validate_heat_conduction.py validate_heat_conduction.py COPYONLY)
+
+# Star formation test
+configure_file(test_star_formation.ini test_star_formation.ini COPYONLY)
+configure_file(validate_star_formation.py validate_star_formation.py COPYONLY)
