@@ -285,6 +285,7 @@ DEFINE_UNIT( NEWTON_G   , 6.67408e-11 * Newton() * (meter()*meter()) / (kilogram
 DEFINE_UNIT( SOLAR_MASS , solar_mass() );
 DEFINE_UNIT( SPEEDOFLIGHT, 299792458 * meter() / second() );
 DEFINE_UNIT( H0         , 70.3 * km() / s() / Mpc() );
+DEFINE_UNIT( XH         , 0.76 * one() ); // Hydrogen Mass fraction
 DEFINE_UNIT( YHE        , 0.24 * one() ); // Helium Mass fraction
 DEFINE_UNIT( yHE        , (YHE()/(1.-YHE())/MHE_OVER_MH()) ); // Helium number fraction
 
