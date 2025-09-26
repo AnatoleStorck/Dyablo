@@ -60,6 +60,17 @@ public:
     };
   }
   
+
+  /// Get the level of the cell
+  KOKKOS_INLINE_FUNCTION
+  int getCellLevel( const CellIndex& iCell ) const
+  {
+    DYABLO_ASSERT_KOKKOS_DEBUG( iCell.is_valid(), "iCell should be valid to get size" );
+
+    const LightOctree& lmesh = this->lmesh;
+    return lmesh.getLevel(iCell.iOct);
+  }
+  
   /// Get the physical position of the center of the cell
   KOKKOS_INLINE_FUNCTION
   pos_t getCellCenter( const CellIndex& iCell ) const
