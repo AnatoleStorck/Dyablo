@@ -18,9 +18,9 @@ struct GadgetHeader
     bool Flag_StellarAge;
     double h0;
     std::array<double, 6> MassTable;
-    uint32_t NumFilesPerSnapshot;
+    int NumFilesPerSnapshot;
     std::array<uint32_t, 6> NumPart_ThisFile;
-    std::array<uint32_t, 6> NumPart_Total;
+    std::array<uint64_t, 6> NumPart_Total;
     std::array<uint32_t, 6> NumPart_Total_HighWord;
     double Omega0;
     double OmegaLambda;
@@ -30,9 +30,9 @@ struct GadgetHeader
 
     GadgetHeader ( HDF5ViewReader& reader ) :
             BoxSize         ( reader.read_attr<double>     ("Header", "BoxSize") ),
-            Flag_Cooling    ( reader.read_attr<int32_t>    ("Header", "Flag_Cooling") ),
+            Flag_Cooling    ( reader.read_attr<bool>       ("Header", "Flag_Cooling") ),
             Flag_DoublePrecision
-                            ( reader.read_attr<int32_t>    ("Header", "Flag_DoublePrecision") ),
+                            ( reader.read_attr<bool>       ("Header", "Flag_DoublePrecision") ),
             Flag_Feedback   ( reader.read_attr<bool>       ("Header", "Flag_Feedback") ),
             // Flag_IC_Info    ( reader.read_attr<int32_t>    ("Header", "Flag_IC_Info") ),
             Flag_Metals     ( reader.read_attr<int32_t>    ("Header", "Flag_Metals") ),
@@ -41,9 +41,9 @@ struct GadgetHeader
             h0              ( reader.read_attr<double>     ("Header", "HubbleParam") ),
             MassTable       ( reader.read_attr<double, 6>  ("Header", "MassTable") ),
             NumFilesPerSnapshot
-                            ( reader.read_attr<uint32_t>   ("Header", "NumFilesPerSnapshot") ),
+                            ( reader.read_attr<int>        ("Header", "NumFilesPerSnapshot") ),
             NumPart_ThisFile( reader.read_attr<uint32_t, 6>("Header", "NumPart_ThisFile") ),
-            NumPart_Total   ( reader.read_attr<uint32_t, 6>("Header", "NumPart_Total") ),
+            NumPart_Total   ( reader.read_attr<uint64_t, 6>("Header", "NumPart_Total") ),
             NumPart_Total_HighWord
                             ( reader.read_attr<uint32_t, 6>("Header", "NumPart_Total_HighWord") ),
             Omega0          ( reader.read_attr<double>     ("Header", "Omega0") ),
