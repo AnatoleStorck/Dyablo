@@ -79,12 +79,16 @@ public:
       if (!cosmology)
         return 0.0;
 
+      // How much above the mean matter density should the threshold be?
+      const real_t Delta = configMap.getValue<real_t>("star_formation", "mean_overdensity_threshold", 200);
+
+      // Compute mean matter density
       const auto H0 = configMap.getValue_in_code_unit<Inv_Time>("cosmology", "H0");
       const auto four_pi_G = configMap.getValue_in_code_unit<G_units>( "gravity", "4_Pi_G" );
       const auto rhoc = 3.0 * H0 * H0 /( 2 * four_pi_G );
-      const auto omegam = configMap.getValue<real_t>("cosmology", "omegam", 0.3);
+      const real_t omegam = configMap.getValue<real_t>("cosmology", "omegam", 0.3);
 
-      return rhoc * omegam;
+      return rhoc * omegam * Delta;
     }()),
     epsilon_star    ( configMap.getValue<real_t>("star_formation", "epsilon_star") ),
     seed            ( 100 ),
@@ -133,7 +137,7 @@ public:
     // Star formation parameters
     const real_t rho_threshold = FMAX(
       Units::physical_to_supercomoving<Units::Density>(this->rho_threshold_physical, aexp),
-      200.0 * rho_m
+      this->rho_m
     );
     using P_over_rho_u = decltype(Units::m2() / Units::s2());
     const real_t P_over_rho_threshold = Units::physical_to_supercomoving<P_over_rho_u>(this->P_over_rho_threshold_physical, aexp);
