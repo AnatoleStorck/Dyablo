@@ -258,7 +258,7 @@ public:
           const real_t Nstar_mean = Mgas / Mstar;
           const uint32_t Nstar = rand::poisson(Nstar_mean, rand_pool);
 
-          Nstar_formed += Nstar;
+          Nstar_formed += Nstar > 0 ? 1 : 0;
 
           Mparticle = FMIN(Nstar * Mstar, 0.9 * Mcell);
         }
