@@ -223,8 +223,10 @@ public:
 
       const auto& rand_pool = this->rand_pool;
 
-      foreach_particle.foreach_particle( "fill_spawned_particles", Pnew,
-        KOKKOS_LAMBDA (ParticleData::ParticleIndex iPart)
+      int Nstar_formed = 0;
+
+      foreach_particle.reduce_particle( "fill_spawned_particles", Pnew,
+        KOKKOS_LAMBDA (ParticleData::ParticleIndex iPart, int& Nstar_formed)
       {
         auto iCell = star_forming_cells(iPart);
 
@@ -256,6 +258,8 @@ public:
           const real_t Nstar_mean = Mgas / Mstar;
           const uint32_t Nstar = rand::poisson(Nstar_mean, rand_pool);
 
+          Nstar_formed += Nstar;
+
           Mparticle = FMIN(Nstar * Mstar, 0.9 * Mcell);
         }
 
@@ -271,7 +275,10 @@ public:
         auto u_out = policy.primToCons( q );
         policy.setConsState( Uin, iCell, u_out );
 
-      });
+      }, Nstar_formed);
+
+      if (Nstar_formed > 0)
+        std::cout << "Formed " << Nstar_formed << " star particles" << std::endl;
     }
 
     // Merge spawned_particles to particles ignoring particles with mass=0
