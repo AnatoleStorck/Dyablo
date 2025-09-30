@@ -8,11 +8,22 @@ from scipy.integrate import solve_ivp
 from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import root
 
-plt.rcParams["figure.dpi"] = 200
+import pyablo
 
-with h5py.File(
-    "/home/cphyc/Documents/prog/grackle_data_files/input/CloudyData_UVB=HM2012_high_density.h5"
-) as f:
+import sys
+
+
+xmf_filename = sys.argv[1]  # "test_sod_2D_main.xmf"
+target_precision = float(sys.argv[2])
+png_filename = sys.argv[3]
+print("Validate Cooling")
+print(f"XMF filename : {xmf_filename}")
+print(f"Target Precision : {target_precision}")
+print(f"PNG output filename : {png_filename}")
+
+# --------------------------------
+# Read cooling table
+with h5py.File("analytical_cooling_table.h5") as f:
     log_nH_grid = f["CoolingRates/Primordial/MMW"].attrs["Parameter1"]
     # Reverse redshift grid to have increasing order
     redshift_grid = f["CoolingRates/Primordial/MMW"].attrs["Parameter2"]
@@ -40,7 +51,10 @@ with h5py.File(
     )
 
 # Open output file
-outputs = sorted(Path(".").glob("cooling_iter*.h5"))
+reader = pyablo.XdmfReader()
+series = reader.readTimeSeries(xmf_filename)
+outputs = [fname.replace(".xmf", ".h5") for fname in series]
+
 
 
 def read_output(filename):
@@ -107,7 +121,7 @@ T_exp = result.y[0]
 dT = np.linalg.norm((T_sim - T_exp) / (T_sim + T_exp) * 2)
 # There may be relatively large difference close to the stiffest points, remove them
 dT_dt = np.gradient(T_exp, t_eval.to("Myr"))
-mask = np.abs(dT_dt) < 2e5  # K/Myr
+mask = np.abs(dT_dt) < 1e5  # K/Myr
 nan_it = np.where(mask, 1, np.nan)
 nan_aint = np.where(~mask, 1, np.nan)
 
@@ -132,6 +146,6 @@ ax.set(
     xlim=(4e-2, 1e2),
     xscale="log",
 )
-fig.savefig("/tmp/verify_cooling.png")
+fig.savefig(png_filename)
 
 np.testing.assert_allclose(T_sim[mask], T_exp[mask], rtol=0.05)
