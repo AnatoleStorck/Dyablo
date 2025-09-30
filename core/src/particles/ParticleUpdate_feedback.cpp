@@ -44,31 +44,21 @@ public:
 
     timers.get("ParticleUpdate_feedback").start();
 
-    std::set<std::string> fields = {"rho_SN", "e_tot_SN", "rho_vx_SN", "rho_vy_SN", "rho_vz_SN"};
-    std::set<std::string> pfields = {"rho", "e_tot", "rho_vx", "rho_vy", "rho_vz"};
     std::vector<UserData::FieldAccessor_FieldInfo>
-      Uin_infos = {{"rho", IRho},    {"e_tot", IE_tot},    {"rho_vx", IRho_vx},    {"rho_vy", IRho_vy},    {"rho_vz", IRho_vz}},
-      USN_infos = {{"rho_SN", IRho}, {"e_tot_SN", IE_tot}, {"rho_vx_SN", IRho_vx}, {"rho_vy_SN", IRho_vy}, {"rho_vz_SN", IRho_vz}};
+      Uin_infos = {{"rho", IRho},    {"e_tot", IE_tot},    {"rho_vx", IRho_vx},    {"rho_vy", IRho_vy},    {"rho_vz", IRho_vz}};
     std::vector<UserData::ParticleAccessor_AttributeInfo>
       pinfos = {{"mass", IMASS}, {"vx", IVX}, {"vy", IVY}, {"vz", IVZ}, {"birth_time", IBIRTH}};
 
     bool has_metallicity = U.has_field("metallicity");
     if (has_metallicity) {
-      fields.insert("metallicity_SN");
-      pfields.insert("metallicity");
-
-      Uin_infos.push_back( {"metallicity",    IRho_Z} );
-      USN_infos.push_back( {"metallicity_SN", IRho_Z} );
+      Uin_infos.push_back( {"metallicity", IRho_Z} );
       pinfos.push_back( {"metallicity", IMETAL} );
     }
-
-    U.new_fields(fields);
 
     // Get accessors
     auto Ppos = U.getParticleArray( "particles" );
     auto Pdata = U.getParticleAccessor( "particles", pinfos );
     auto Uin = U.getAccessor( Uin_infos );
-    auto USN = U.getAccessor( USN_infos );
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
@@ -109,38 +99,20 @@ public:
         );
 
         // Atomic are mandatory since multiple particles can explode in the same cell
-        Kokkos::atomic_add(&USN.at(iCell, IRho), rho_loss);
-        Kokkos::atomic_add(&USN.at(iCell, IE_tot), ethermal + ekin);
-        Kokkos::atomic_add(&USN.at(iCell, IRho_vx), rho_loss * part_vel[IX]);
-        Kokkos::atomic_add(&USN.at(iCell, IRho_vy), rho_loss * part_vel[IY]);
-        Kokkos::atomic_add(&USN.at(iCell, IRho_vz), rho_loss * part_vel[IZ]);
+        Kokkos::atomic_add(&Uin.at(iCell, IRho), rho_loss);
+        Kokkos::atomic_add(&Uin.at(iCell, IE_tot), ethermal + ekin);
+        Kokkos::atomic_add(&Uin.at(iCell, IRho_vx), rho_loss * part_vel[IX]);
+        Kokkos::atomic_add(&Uin.at(iCell, IRho_vy), rho_loss * part_vel[IY]);
+        Kokkos::atomic_add(&Uin.at(iCell, IRho_vz), rho_loss * part_vel[IZ]);
         if (has_metallicity) {
           real_t Z_loss = yield_SNII + (1 - yield_SNII) * Pdata.at(iPart, IMETAL);
-          Kokkos::atomic_add(&USN.at(iCell, IRho_Z), rho_loss * Z_loss);
+          Kokkos::atomic_add(&Uin.at(iCell, IRho_Z), rho_loss * Z_loss);
         }
 
         // Update particle properties
         Pdata.at(iPart, IMASS) -= Mloss;
       }
     });
-
-    // Second pass, copy SN feedback yields to hydro fields
-    foreach_cell.foreach_cell( "cells_update_feedback", Uin.getShape(),
-      KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell )
-    {
-      // Note: we do not need atomic here since each cell is processed once
-      Uin.at(iCell, IRho)    += USN.at(iCell, IRho);
-      Uin.at(iCell, IE_tot)  += USN.at(iCell, IE_tot);
-      Uin.at(iCell, IRho_vx) += USN.at(iCell, IRho_vx);
-      Uin.at(iCell, IRho_vy) += USN.at(iCell, IRho_vy);
-      Uin.at(iCell, IRho_vz) += USN.at(iCell, IRho_vz);
-      if (has_metallicity)
-        Uin.at(iCell, IRho_Z)  += USN.at(iCell, IRho_Z);
-    });
-
-    // Clean SN feedback yields
-    for (const std::string& name : fields)
-      U.delete_field(name);
 
     timers.get("ParticleUpdate_feedback").stop();
   }
