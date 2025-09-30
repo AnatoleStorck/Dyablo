@@ -97,4 +97,3 @@ for i in range(3):
     np.testing.assert_allclose(p_gas[:, i] + p_part[:, i], p_gas[0, i] + p_part[0, i], rtol=rtol)
     # Total metallicity should be conserved
     np.testing.assert_allclose(M_metal_gas + M_metal_part, M_metal_gas[0] + M_metal_part[0], rtol=rtol)
-    print(M_metal_gas, M_metal_part)
