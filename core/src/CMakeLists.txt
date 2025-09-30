@@ -1,4 +1,4 @@
-set( core_src
+`set( core_src
     ${CMAKE_CURRENT_SOURCE_DIR}/amr/AMRmesh.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/user_data/UserData_fields.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/user_data/UserData_particles.cpp
@@ -33,6 +33,7 @@ set( core_src
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_CIC_move.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_CIC_density.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_star_formation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_feedback.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/parabolic/ParabolicUpdate_explicit.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Cooling_FF.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_GLM.cpp
