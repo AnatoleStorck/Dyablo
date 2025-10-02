@@ -29,7 +29,7 @@ namespace dyablo {
 /***
  * Triggers when variable <var> has increased more than <interval> since last trigger
  * (last trigger is rounded to a multiple of <interval> to avoid drifting)
- ***/ 
+ ***/
 template< typename T >
 struct Interval_trigger
 {
@@ -43,7 +43,7 @@ public:
   Interval_trigger() = default;
   Interval_trigger(const Interval_trigger&) = default;
   Interval_trigger& operator=(const Interval_trigger&) = default;
-    
+
   Interval_trigger( const std::string& var, T interval, const ScalarSimulationData& scalar_data  )
     : var(var),
       enabled( interval > 0 ),
@@ -62,7 +62,7 @@ public:
       last_trigger = std::floor(val/interval) * interval;
       return true;
     }
-    else 
+    else
       return false;
   }
 };
@@ -99,7 +99,7 @@ public:
     use_t_end            ( configMap.getValue<bool>("run", "use_tEnd", t_end > 0) ),
     cosmo_manager        ( configMap )
   {
-    // Translate output/checkpoint_expslice into 
+    // Translate output/checkpoint_expslice into
     if( configMap.hasValue("run", "output_expslice") || configMap.hasValue("run", "checkpoint_expslice")  )
     {
       real_t output_expslice = configMap.getValue<real_t>("run", "output_expslice", -1);
@@ -114,7 +114,7 @@ public:
           real_t output_timeslice = configMap.getValue<real_t>("run", "output_timeslice", output_expslice);
           if( output_timeslice != output_expslice )
             std::cout << "WARNING : output_expslice ("<<output_expslice<<") is set but run/output_timeslice was already set to a different value. Using run/output_timeslice = " << output_timeslice << std::endl;
-        
+
           real_t checkpoint_timeslice = configMap.getValue<real_t>("run", "checkpoint_timeslice", checkpoint_expslice);
           if( checkpoint_timeslice != checkpoint_expslice )
             std::cout << "WARNING : checkpoint_expslice ("<<checkpoint_expslice<<") is set but run/checkpoint_timeslice was already set to a different value. Using run/checkpoint_timeslice = " << checkpoint_timeslice << std::endl;
@@ -124,14 +124,14 @@ public:
     this->output_slice_var = configMap.getValue<std::string>("run", "output_slice_var", "time");
     this->output_timeslice     = Interval_trigger(output_slice_var, configMap.getValue<real_t>("run", "output_timeslice", -1), scalar_data);
     this->checkpoint_timeslice = Interval_trigger(output_slice_var, configMap.getValue<real_t>("run", "checkpoint_timeslice", -1), scalar_data);
-    
+
     if( t_end_var == "aexp" )
     {
       this->t_end_var = "time";
       real_t aexp_end = this->t_end;
       this->t_end = cosmo_manager.expansionToTime( aexp_end );
     }
-    else if( t_end_var != "time" ) 
+    else if( t_end_var != "time" )
       std::cout << "WARNING : can't correct dt to match t_end, possible overshoot. var=" << t_end_var << std::endl;
 
   }
@@ -218,7 +218,7 @@ private:
   std::shared_ptr<AMRmesh> init_amr_mesh( ConfigMap& configMap )
   {
     AMRmesh::Parameters p = AMRmesh::parse_parameters(configMap);
-    return std::make_shared<AMRmesh>( p.dim, p.periodic, p.level_min, p.level_max, 
+    return std::make_shared<AMRmesh>( p.dim, p.periodic, p.level_min, p.level_max,
                                       p.coarse_grid_size );
   }
 public:
@@ -250,7 +250,7 @@ public:
       std::string hydro_problem = configMap.getValue<std::string>("hydro", "problem", "undefined");
       std::cout << "WARNING : hydro/problem is deprecated in .ini, use run/initial_conditions instead" << std::endl;
       configMap.getValue<std::vector<std::string>>("run", "initial_conditions", {hydro_problem});
-    }   
+    }
 
 
     timers.get("initial_conditions").start();
@@ -269,25 +269,25 @@ public:
       for( std::string init_name : initial_conditions_ids )
       {
         std::unique_ptr<InitialConditions> initial_conditions =
-          InitialConditionsFactory::make_instance(init_name, 
+          InitialConditionsFactory::make_instance(init_name,
             configMap,
             m_foreach_cell,
             timers);
         initial_conditions->init( U );
-      }     
-    } 
+      }
+    }
 
     if( !U.has_field("rho") )
       U.new_fields({"rho"});
     timers.get("initial_conditions").stop();
 
-    configMap.getValue<int>("mesh", "ndim", 3); 
+    configMap.getValue<int>("mesh", "ndim", 3);
 
     this->m_nlog = configMap.getValue<int>("run", "nlog", 10);
     this->m_enable_output = configMap.getValue<bool>("run", "enable_output", true);
     this->m_enable_checkpoint = configMap.getValue<bool>("run", "enable_checkpoint", true);
     this->m_iter_start = configMap.getValue<int>("run", "iter_start", 0);
-  
+
     this->cosmo_manager = std::make_unique<CosmoManager>( configMap );
     real_t t0_default = 0;
     if( cosmo_manager->cosmo_run )
@@ -334,10 +334,10 @@ public:
     std::string godunov_updater_id = configMap.getValue<std::string>("hydro", "update", "HydroUpdate_hancock");
     this->has_mhd = godunov_updater_id.find("MHD") != std::string::npos;
     this->is_glm  = godunov_updater_id.find("GLM") != std::string::npos;
-    
+
 
     {
-      int hydro_ghost_count;      
+      int hydro_ghost_count;
       if( godunov_updater_id.find("oneneighbor") != std::string::npos )
         hydro_ghost_count = 2; // Could be 1 but other kernels may need 2
       else if( godunov_updater_id.find("hancock") != std::string::npos )
@@ -347,7 +347,7 @@ public:
 
       this->ghost_count = std::min( {U.getShape().bx, U.getShape().by, (uint32_t)hydro_ghost_count} );
     }
-    
+
 
 
     this->godunov_updater = HyperbolicUpdateFactory::make_instance( godunov_updater_id,
@@ -415,7 +415,7 @@ public:
     for (auto compute_dt_id: compute_dt_ids) {
       this->compute_dt.push_back(Compute_dtFactory::make_instance( compute_dt_id,
         configMap,
-        m_foreach_cell, 
+        m_foreach_cell,
         timers
       ));
     }
@@ -451,7 +451,7 @@ public:
     for (auto source_updater_id: source_updater_ids) {
       this->source_updaters.push_back(SourceUpdateFactory::make_instance( source_updater_id,
         configMap,
-        m_foreach_cell, 
+        m_foreach_cell,
         timers
       ));
     }
@@ -498,7 +498,7 @@ public:
     } 
     timers.get("passive_scalar_init").stop();
 
-    // Sanity check : No sense in doing parabolic update without hydro 
+    // Sanity check : No sense in doing parabolic update without hydro
     DYABLO_ASSERT_HOST_RELEASE(godunov_updater || !viscosity_updater, "Cannot have viscosity without hydro !");
     DYABLO_ASSERT_HOST_RELEASE(godunov_updater || !thermal_conduction_updater, "Cannot have thermal conduction without hydro !");
 
@@ -513,13 +513,13 @@ public:
           std::cout << "`" << id << "` ";
       std::cout << std::endl;
       std::cout << "Refine condition   : " << refine_condition_id << std::endl;
-      std::cout << "Compute dt         : "; 
+      std::cout << "Compute dt         : ";
         for( const std::string& id : compute_dt_ids )
           std::cout << "`" << id << "` ";
         std::cout << std::endl;
-      if (viscosity_updater_id != "none") 
+      if (viscosity_updater_id != "none")
         std::cout << std::endl << "Viscosity solver : " << viscosity_updater_id << std::endl;
-      if (tc_updater_id != "none") 
+      if (tc_updater_id != "none")
         std::cout << "Thermal conduction solver : " << tc_updater_id << std::endl;
       std::cout << "Source Terms : ";
       for(const std::string &id : source_updater_ids )
@@ -527,9 +527,9 @@ public:
       std::cout << std::endl;
       std::cout << "##########################" << std::endl;
     }
- 
+
     std::ofstream out_ini("last.ini" );
-    configMap.output( out_ini );       
+    configMap.output( out_ini );
 
     timers.get("Init").stop();
   }
@@ -564,7 +564,7 @@ public:
     else
     {
       std::ofstream out("timers.txt");
-      out << "Rank"; 
+      out << "Rank";
       for( const std::string& name : names )
       {
         out << " ; " << name;
@@ -587,7 +587,7 @@ public:
         }
         out << std::endl;
       }
-    }    
+    }
   }
 
   /**
@@ -597,7 +597,7 @@ public:
   {
     
 
-    // Stop simulation when recieving SIGINT 
+    // Stop simulation when recieving SIGINT
     // NOTE : mpirun catches SIGINT and forwards SIGTERM to child process
     // NOTE : scancel sends SIGTERM by default, you can use 'scancel -s INT'
     signal( SIGINT, interrupt_handler );
@@ -635,7 +635,7 @@ public:
     timers.get("checkpoint").stop();
 
     int rank = m_communicator.MPI_Comm_rank();
-    if ( rank == 0 ) 
+    if ( rank == 0 )
     {
       std::cout << "Final ";
       m_scalar_data.print();
@@ -676,7 +676,7 @@ public:
         int rank = m_communicator.MPI_Comm_rank();
         if( rank == 0 )
         {
-          std::cout << "Output: "; 
+          std::cout << "Output: ";
           m_scalar_data.print();
         }
         io_manager->save_snapshot(U, m_scalar_data);
@@ -692,7 +692,7 @@ public:
         int rank = m_communicator.MPI_Comm_rank();
         if( rank == 0 )
         {
-          std::cout << "Checkpoint: "; 
+          std::cout << "Checkpoint: ";
           m_scalar_data.print();
         }
         io_manager_checkpoint->save_snapshot(U, m_scalar_data);
@@ -723,12 +723,12 @@ public:
       m_scalar_data.set("dt", dt);
 
       // correct dt if end of simulation
-      m_iteration_handler->correct_dt_end(m_scalar_data);     
-      
+      m_iteration_handler->correct_dt_end(m_scalar_data);
+
       timers.get("dt").stop();
     }
 
-    // Log iteration    
+    // Log iteration
     { // Todo make a logger
       int rank = m_communicator.MPI_Comm_rank();
       if( m_scalar_data.get<int>("iter") % m_nlog == 0 )
@@ -756,8 +756,8 @@ public:
       auto Uexchange = U.getAccessor(field_info);
       ghost_comm.exchange_ghosts( Uexchange );
     };
-    
-    
+
+
     if (m_gravity_type & GRAVITY_FIELD) {
       if( !U.has_field("gx") )
         U.new_fields({"gx", "gy", "gz"});
@@ -783,7 +783,7 @@ public:
       if (this->is_glm)
         fields_to_exchange.push_back({"psi"});
     }
-    if (m_gravity_type & GRAVITY_FIELD) 
+    if (m_gravity_type & GRAVITY_FIELD)
     {
       fields_to_exchange.push_back("gphi");
     }
@@ -806,7 +806,7 @@ public:
       {
         U.new_fields({"rho_g"});
         particle_update_density->update( U, m_scalar_data );
-        
+
         // Backup rho without projected particles
         U.move_field("rho_bak", "rho");
         U.move_field("rho", "rho_g");
@@ -822,12 +822,6 @@ public:
       // Restore rho before projection (only if particle projection)
       if( particle_update_density )
         U.move_field("rho", "rho_bak");
-    }
-
-    // Particle source terms
-    if( particle_source_term )
-    {
-      particle_source_term->update( U, m_scalar_data );
     }
 
     // Move particles
@@ -864,32 +858,32 @@ public:
       if ( viscosity_updater )
         viscosity_updater->update( U, m_scalar_data );
       if ( thermal_conduction_updater )
-        thermal_conduction_updater->update( U, m_scalar_data );   
+        thermal_conduction_updater->update( U, m_scalar_data );
 
       for (auto &source_updater : source_updaters)
         source_updater->update( U, m_scalar_data );
 
-      U.move_field( "rho", "rho_next" ); 
-      U.move_field( "e_tot", "e_tot_next" ); 
-      U.move_field( "rho_vx", "rho_vx_next" ); 
-      U.move_field( "rho_vy", "rho_vy_next" ); 
+      U.move_field( "rho", "rho_next" );
+      U.move_field( "e_tot", "e_tot_next" );
+      U.move_field( "rho_vx", "rho_vx_next" );
+      U.move_field( "rho_vy", "rho_vy_next" );
       U.move_field( "rho_vz", "rho_vz_next" );
       U.move_field( "rho_scalar_0", "rho_scalar_0_next" );
       U.move_field( "rho_scalar_1", "rho_scalar_1_next" );
       U.move_field( "rho_scalar_2", "rho_scalar_2_next" );
       if( this->has_mhd )
       {
-        U.move_field( "Bx", "Bx_next" ); 
-        U.move_field( "By", "By_next" ); 
+        U.move_field( "Bx", "Bx_next" );
+        U.move_field( "By", "By_next" );
         U.move_field( "Bz", "Bz_next" );
         if (this->is_glm)
           U.move_field( "psi", "psi_next" );
       }
       if(rad_updater)
       {
-        U.move_field( "e_rad", "e_rad_next" ); 
-        U.move_field( "fx_rad", "fx_rad_next" ); 
-        U.move_field( "fy_rad", "fy_rad_next" ); 
+        U.move_field( "e_rad", "e_rad_next" );
+        U.move_field( "fx_rad", "fx_rad_next" );
+        U.move_field( "fy_rad", "fy_rad_next" );
         U.move_field( "fz_rad", "fz_rad_next" );
       }
     }
@@ -899,14 +893,21 @@ public:
       particle_spawn->update( U, m_scalar_data );
     }
 
+    // Particle source terms
+    if( particle_source_term )
+    {
+      particle_source_term->update( U, m_scalar_data );
+    }
+
+
     m_iteration_handler->next_iter(m_scalar_data);
-    
+
     if (m_gravity_type & GRAVITY_FIELD)
     {
       // U.delete_field("gx");
       // U.delete_field("gy");
       // U.delete_field("gz");
-    }    
+    }
 
     // AMR cycle
     {
@@ -937,9 +938,9 @@ public:
         // Resize and fill U with copied/interpolated/extrapolated data
         timers.get("AMR: remap userdata").start();
         mapUserData->remap(U);
-        
+
         //TODO
-        //std::cout << "Resize U after remap : " << DataArrayBlock::required_allocation_size(U2.U.extent(0), U2.U.extent(1), U2.U.extent(2)) * (2/1e6) 
+        //std::cout << "Resize U after remap : " << DataArrayBlock::required_allocation_size(U2.U.extent(0), U2.U.extent(1), U2.U.extent(2)) * (2/1e6)
         //    << " -> " << DataArrayBlock::required_allocation_size(U2.U.extent(0), U2.U.extent(1), m_amr_mesh->getNumOctants()) * (2/1e6) << " MBytes" << std::endl;
 
         timers.get("AMR: remap userdata").stop();
@@ -961,20 +962,20 @@ public:
 
         timers.get("AMR: load-balance").stop();
       }
-    }    
+    }
   }
 
 private:
   // Simulation parameters
-  int m_nlog; //! Timestep log frequency  
+  int m_nlog; //! Timestep log frequency
   bool m_enable_output; //! Enable vizualization output and output at least at beginning and end of simulation
   bool m_enable_checkpoint; //! Enable checkpoint output and output at least at beginning and end of simulation
-  
+
   GravityType m_gravity_type;
-  
+
   int m_iter_start; //! First iteration (for restart)
 
-  ScalarSimulationData m_scalar_data;  
+  ScalarSimulationData m_scalar_data;
 
   MpiComm m_communicator;
   std::shared_ptr<AMRmesh> m_amr_mesh;
