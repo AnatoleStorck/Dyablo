@@ -70,16 +70,17 @@ public:
     const real_t E_SNII = Units::physical_to_supercomoving<Units::Energy>(E_SNII_physical, aexp);
     const real_t M_SNII = Units::physical_to_supercomoving<Units::Mass>(M_SNII_physical, aexp);
     const real_t E_per_M_SNII = E_SNII / M_SNII;
-    const real_t t_SNII = Units::physical_to_supercomoving<Units::Time>(t_SNII_physical, aexp);
+    const real_t t_SNII_physical = this->t_SNII_physical;
+    const real_t dt_physical = Units::supercomoving_to_physical<Units::Time>(dt, aexp);
 
     foreach_particle.foreach_particle( "particles_update_feedback", Ppos,
       KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
     {
       // Age of the particle
-      real_t age = t - Pdata.at(iPart, IBIRTH);
+      real_t age_physical = t - Pdata.at(iPart, IBIRTH);
 
       // If the SN will explode in this time step
-      if ((age < t_SNII) & ((age + dt) > t_SNII)) {
+      if ((age_physical < t_SNII_physical) & ((age_physical + dt_physical) > t_SNII_physical)) {
         pos_t part_pos = {Ppos.pos(iPart, IX), Ppos.pos(iPart, IY), Ppos.pos(iPart, IZ)};
         pos_t part_vel = {Pdata.at(iPart, IVX), Pdata.at(iPart, IVY), Pdata.at(iPart, IVZ)};
 
