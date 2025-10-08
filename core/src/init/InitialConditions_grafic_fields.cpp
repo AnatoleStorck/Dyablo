@@ -109,7 +109,6 @@ public:
 
     {
       // Mean mass for a raw cell used for refinement
-      double Lbox = (xmax-xmin);
       double mass0 = rhoc * omegam * (dx * dx * dx);
       std::cout << "mean mass per cell (code Units)=" << mass0 << std::endl;
 
