@@ -23,7 +23,7 @@ public:
     E_SNII_physical ( configMap.getValue_in_code_unit<Units::Energy>("star_feedback", "E_SNII", "1e51 erg") ),
     M_SNII_physical ( configMap.getValue_in_code_unit<Units::Mass>  ("star_feedback", "M_SNII", "10 Msun") ),
     t_SNII_physical ( configMap.getValue_in_code_unit<Units::Time>  ("star_feedback", "t_SNII", "10 Myr") ),
-    cosmology       ( configMap.getValue<bool>("cosmology", "enable", false) )
+    cosmology       ( configMap.getValue<bool>("cosmology", "active", false) )
   {
   }
 
