@@ -555,7 +555,9 @@ public:
     // ----------------------------------------------------------
     // Cooling timeloop
     Units::Time code_time = Units::code_units().getUnit(Units::s());
-    const real_t dt_tot_s = (scalar_data.get<real_t>("dt") * code_time).convert_to(Units::s());
+    const real_t dt = (scalar_data.get<real_t>("dt") * code_time).convert_to(Units::s());
+    const real_t dt_tot_s = Units::supercomoving_to_physical<Units::Time>(dt,aexp);
+   
     real_t XH = Units::XH().convert_to(Units::one());
 
     auto mp_per_cc     = Units::PROTON_MASS() / Units::cm3();
