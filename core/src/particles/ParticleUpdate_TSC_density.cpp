@@ -76,7 +76,7 @@ public:
       v_in[IZ] = (ndim == 2) ? 1.0 : v_in[IZ];
       pos_t v_out_minus = { 0.5*(0.5 - p[IX])*(0.5 - p[IX]), 
                             0.5*(0.5 - p[IY])*(0.5 - p[IY]),
-                            0.5*(0.5 - p[IZ])*(0.5 - p[IZ])};     // volume fraction in neighbor cells [-1.5, 0.5]
+                            0.5*(0.5 - p[IZ])*(0.5 - p[IZ])};     // volume fraction in neighbor cells [-1.5, -0.5]
       pos_t v_out_plus = {  0.5*(0.5 + p[IX])*(0.5 + p[IX]), 
                             0.5*(0.5 + p[IY])*(0.5 + p[IY]),
                             0.5*(0.5 + p[IZ])*(0.5 + p[IZ])};     // volume fraction in neighbor cells [0.5, 1.5]
