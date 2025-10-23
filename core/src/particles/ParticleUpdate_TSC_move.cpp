@@ -79,7 +79,7 @@ public:
       pos_t v_in =  {0.75-p[IX]*p[IX], 0.75-p[IY]*p[IY], 0.75-p[IZ]*p[IZ]};  // volume fraction in local cell [-0.5, 0.5]
       pos_t v_out_minus = { 0.5*(0.5 - p[IX])*(0.5 - p[IX]), 
                             0.5*(0.5 - p[IY])*(0.5 - p[IY]),
-                            0.5*(0.5 - p[IZ])*(0.5 - p[IZ])};     // volume fraction in neighbor cells [-1.5, 0.5]
+                            0.5*(0.5 - p[IZ])*(0.5 - p[IZ])};     // volume fraction in neighbor cells [-1.5, -0.5]
       pos_t v_out_plus = {  0.5*(0.5 + p[IX])*(0.5 + p[IX]), 
                             0.5*(0.5 + p[IY])*(0.5 + p[IY]),
                             0.5*(0.5 + p[IZ])*(0.5 + p[IZ])};     // volume fraction in neighbor cells [0.5, 1.5]
