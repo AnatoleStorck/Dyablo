@@ -78,7 +78,20 @@ public:
         return data_d;
     }
 
-    template< typename View_t >
+    bool has_dataset(const std::string& varpath) const
+    {
+        // Check if the link exists
+        htri_t exists = H5Lexists(m_hdf5_file, varpath.c_str(), H5P_DEFAULT);
+        if (exists <= 0) return false;
+
+        // Make sure this is a dataset, not a group
+        H5O_info_t obj_info;
+        herr_t status = H5Oget_info_by_name3(m_hdf5_file, varpath.c_str(), &obj_info, H5O_INFO_BASIC, H5P_DEFAULT);
+        if (status < 0) return false;
+        return (obj_info.type == H5O_TYPE_DATASET);
+    }
+
+    template< typename View_t, std::enable_if_t<Kokkos::is_view_v<View_t>> >
     View_t read_attr( const std::string& varpath, const std::string& attrname )
     {
         static_assert(std::is_same_v<typename View_t::array_layout, Kokkos::LayoutRight> || (View_t::rank == 1), "View is not LayoutRight or 1D");
@@ -120,6 +133,44 @@ public:
         H5Oclose(obj);
 
         return data_d;
+    }
+
+    template< typename T, size_t N >
+    std::array<T, N> read_attr(const std::string& varpath, const std::string& attrname)
+    {
+        static_assert(N>0, "Array size must be greater than 0");
+
+        hid_t type_id = hdf5_type_id<T>();
+
+        hid_t obj = H5Oopen(m_hdf5_file, varpath.c_str(), H5P_DEFAULT);
+        DYABLO_ASSERT_HOST_RELEASE(obj >= 0, "Failed to open object " << varpath);
+
+        hid_t attr = H5Aopen(obj, attrname.c_str(), H5P_DEFAULT);
+        DYABLO_ASSERT_HOST_RELEASE(attr >= 0, "Failed to open attribute " << attrname << " from " << varpath);
+
+        hid_t aspace = H5Aget_space(attr);
+        if (N > 1) {
+            hsize_t dims[1];
+            H5Sget_simple_extent_dims(aspace, dims, NULL);
+            DYABLO_ASSERT_HOST_RELEASE(dims[0] == (hsize_t)N, "Array size mismatch when reading attribute " << attrname << " from " << varpath);
+        }
+
+        std::array<T, N> result;
+        herr_t status = H5Aread(attr, type_id, result.data());
+        DYABLO_ASSERT_HOST_RELEASE(status == 0, "hdf5 error : reading attribute " << attrname << " from " << varpath);
+
+        H5Sclose(aspace);
+        H5Aclose(attr);
+        H5Oclose(obj);
+
+        return result;
+    }
+
+    // Read attribute for scalar types
+    template< typename T >
+    T read_attr(const std::string& varpath, const std::string& attrname)
+    {
+        return read_attr<T, 1>(varpath, attrname)[0];
     }
 
 private:
