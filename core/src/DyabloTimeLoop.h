@@ -376,12 +376,15 @@ public:
       this->m_foreach_cell,
       timers
     );
-    std::string particle_update_source_term_id = configMap.getValue<std::string>("particles", "source_term", "none");
-    this->particle_source_term = ParticleUpdateFactory::make_instance( particle_update_source_term_id,
-      configMap,
-      this->m_foreach_cell,
-      timers
-    );
+
+    std::vector<std::string> particle_update_source_term_ids = configMap.getValue<std::vector<std::string>>("particles", "source_term", {});
+    for (auto particle_update_source_term_id: particle_update_source_term_ids) {
+      this->particle_source_updaters.push_back(ParticleUpdateFactory::make_instance( particle_update_source_term_id,
+        configMap,
+        m_foreach_cell,
+        timers
+      ));
+    }
 
     std::string mapUserData_id = configMap.getValue<std::string>("amr", "remap", "MapUserData_mean");
     this->mapUserData = MapUserDataFactory::make_instance( mapUserData_id,
@@ -894,11 +897,8 @@ public:
     }
 
     // Particle source terms
-    if( particle_source_term )
-    {
-      particle_source_term->update( U, m_scalar_data );
-    }
-
+    for (auto &particle_source_updater : particle_source_updaters)
+      particle_source_updater->update( U, m_scalar_data );
 
     m_iteration_handler->next_iter(m_scalar_data);
 
@@ -992,7 +992,7 @@ private:
   std::unique_ptr<HyperbolicUpdate> rad_updater;
   bool has_mhd, is_glm; // TODO : remove this
   int ghost_count; // TODO : remove this
-  std::unique_ptr<ParticleUpdate> particle_position_updater, particle_update_density, particle_spawn, particle_source_term;
+  std::unique_ptr<ParticleUpdate> particle_position_updater, particle_update_density, particle_spawn;
   std::unique_ptr<MapUserData> mapUserData;
   std::unique_ptr<IOManager> io_manager, io_manager_checkpoint;
   std::unique_ptr<GravitySolver> gravity_solver;
@@ -1003,6 +1003,7 @@ private:
   std::unique_ptr<ParabolicUpdate> thermal_conduction_updater;
   std::unique_ptr<ParabolicUpdate> viscosity_updater;
   std::vector<std::unique_ptr<SourceUpdate>> source_updaters;
+  std::vector<std::unique_ptr<ParticleUpdate>> particle_source_updaters;
 
   int n_passive_scalars;
   std::vector<std::string> passive_scalars_names;
