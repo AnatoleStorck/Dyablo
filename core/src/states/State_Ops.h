@@ -20,6 +20,33 @@ namespace dyablo {
 
 namespace {
 
+template< typename... Ts >
+struct State_tuple;
+
+template< typename _T0, typename... Ts >
+struct State_tuple<_T0, Ts...>
+{
+    using T0 = _T0;
+
+    T0 head;
+    State_tuple<Ts...> tail;
+
+    State_tuple(T0 h, Ts... t)
+    : head(h), tail(t...)
+    {}
+};
+
+template<>
+struct State_tuple<>
+{};
+
+template<typename... Ts>
+auto make_state_tuple( Ts&... vs )
+{
+    return State_tuple<Ts&...>(vs...);
+}
+
+
 template<int N>
 struct as_tuple_t
 {
@@ -40,7 +67,7 @@ struct as_tuple_t<N> \
     static auto as_tuple(S& s) \
     { \
         auto& [__VA_ARGS__] = s; \
-        return std::forward_as_tuple(__VA_ARGS__); \
+        return make_state_tuple(__VA_ARGS__); \
     } \
 };
 
@@ -63,33 +90,28 @@ DEFINE_AS_TUPLE(15,e0,e1,e2,e3,e4,e5,e6,e7,e8,e9,e10,e11,e12,e13,e14)
 template <int I, typename T> 
 using state_tuple_elt_t = std::remove_reference_t<std::tuple_element_t<I,T>>;
 
-template< int I=0, typename F, typename... Tuple_t >
+template< typename F, typename... Tuple_t >
 KOKKOS_INLINE_FUNCTION
 void state_foreach_aux( const F& f, const Tuple_t&... t )
 {
-    constexpr size_t N = (std::tuple_size<Tuple_t>(),...);
-    static_assert( ((N == std::tuple_size<Tuple_t>()) && ...), "state_foreach : tuples not the same size" );
-
-    constexpr bool is_array = ((std::is_bounded_array_v<state_tuple_elt_t<I,Tuple_t>>) && ...);
-    static_assert( ((is_array == std::is_bounded_array_v<state_tuple_elt_t<I,Tuple_t>>) && ...), "state_foreach : tuples don't have the same arrays" );
-    if constexpr( is_array )
+    constexpr bool is_empty = ( std::is_same_v< Tuple_t, State_tuple<> > && ... );
+    static_assert(((is_empty == std::is_same_v< Tuple_t, State_tuple<> >) && ... ), "state_foreach : states are not the same size" );
+    if constexpr (!is_empty)
     {
-        //constexpr size_t array_len = (std::size(state_tuple_elt_t<I,Tuple_t>{}),...);
-        constexpr size_t array_len = std::min({std::size(state_tuple_elt_t<I,Tuple_t>{}) ...});
-        static_assert( ((array_len == std::size(state_tuple_elt_t<I,Tuple_t>{})) && ...), "state_foreach : arrays not the same size" );
-        
-        for(int i=0; i<array_len; i++)
+        constexpr bool is_array = ((std::is_bounded_array_v<std::remove_reference_t<decltype(t.head)>>) || ...);
+        static_assert(((is_array == std::is_bounded_array_v<std::remove_reference_t<decltype(t.head)>>) && ...), "state_foreach : states don't have the same arrays" );
+        if constexpr ( is_array )
         {
-            f( std::get<I>(t)[i]... );
+            constexpr size_t array_len = std::min({std::size(std::remove_reference_t<decltype(t.head)>{}) ...});
+            static_assert( ((array_len == std::size(std::remove_reference_t<decltype(t.head)>{})) && ...), "state_foreach : arrays not the same size" );
+            for( int i=0; i<array_len; i++ )
+                f( t.head[i]... );
         }
-    }
-    else
-    {
-        f( std::get<I>(t)... );
-    }
-    
-    if constexpr( I+1 < N )
-        state_foreach_aux<I+1>(f, t...);
+        else
+            f( t.head... );
+
+        state_foreach_aux( f, t.tail... );
+    }    
 }
 
 } // namespace
