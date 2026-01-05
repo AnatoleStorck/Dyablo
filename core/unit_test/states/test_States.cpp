@@ -394,3 +394,60 @@ TEST( Test_MHD_States, ConsHydroState_setget )
   test_ConsHydroState_setget();
 }
 
+struct Test_State1{
+  double a,b,c;
+};
+
+DECLARE_STATE_TYPE(Test_State1, 3);
+
+TEST(Test_State, Test_Ops)
+{
+  Test_State1 s1 {1,2,3};
+  Test_State1 s2 {10,20,30};
+
+  Test_State1 s3 = s1+s2;
+
+  EXPECT_DOUBLE_EQ( s3.a, 11 );
+  EXPECT_DOUBLE_EQ( s3.b, 22 );
+  EXPECT_DOUBLE_EQ( s3.c, 33 );
+
+  s3 -= s2;
+
+  EXPECT_DOUBLE_EQ( s3.a, 1 );
+  EXPECT_DOUBLE_EQ( s3.b, 2 );
+  EXPECT_DOUBLE_EQ( s3.c, 3 );
+}
+
+
+struct Test_State_Array1{
+  double a,b,c;
+  double d[4];
+};
+
+DECLARE_STATE_TYPE_ARRAY(Test_State_Array1, 7, 4);
+
+TEST(Test_Array_State, Test_Ops)
+{
+  Test_State_Array1 s1 {1,2,3,{4,5,6,7}};
+  Test_State_Array1 s2 {10,20,30,{40,50,60,70}};
+
+  Test_State_Array1 s3 = s1+s2;
+
+  EXPECT_DOUBLE_EQ( s3.a, 11 );
+  EXPECT_DOUBLE_EQ( s3.b, 22 );
+  EXPECT_DOUBLE_EQ( s3.c, 33 );
+  EXPECT_DOUBLE_EQ( s3.d[0], 44 );
+  EXPECT_DOUBLE_EQ( s3.d[1], 55 );
+  EXPECT_DOUBLE_EQ( s3.d[2], 66 );
+  EXPECT_DOUBLE_EQ( s3.d[3], 77 );
+
+  s3 -= s2;
+
+  EXPECT_DOUBLE_EQ( s3.a, 1 );
+  EXPECT_DOUBLE_EQ( s3.b, 2 );
+  EXPECT_DOUBLE_EQ( s3.c, 3 );
+  EXPECT_DOUBLE_EQ( s3.d[0], 4 );
+  EXPECT_DOUBLE_EQ( s3.d[1], 5 );
+  EXPECT_DOUBLE_EQ( s3.d[2], 6 );
+  EXPECT_DOUBLE_EQ( s3.d[3], 7 );
+}
