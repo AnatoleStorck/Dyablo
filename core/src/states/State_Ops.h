@@ -106,7 +106,7 @@ void state_foreach_aux( const F& f, const Tuple_t&... t )
         {
             constexpr size_t array_len = std::min({std::size(std::remove_reference_t<decltype(t.head)>{}) ...});
             static_assert( ((array_len == std::size(std::remove_reference_t<decltype(t.head)>{})) && ...), "state_foreach : arrays not the same size" );
-            for( int i=0; i<array_len; i++ )
+            for( size_t i=0; i<array_len; i++ )
                 f( t.head[i]... );
         }
         else
