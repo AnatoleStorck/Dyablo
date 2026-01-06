@@ -398,7 +398,11 @@ struct Test_State1{
   double a,b,c;
 };
 
+namespace dyablo {
+
 DECLARE_STATE_TYPE(Test_State1, 3);
+
+} // namespace dyablo
 
 TEST(Test_State, Test_Ops)
 {
@@ -424,7 +428,11 @@ struct Test_State_Array1{
   double d[4];
 };
 
+namespace dyablo {
+
 DECLARE_STATE_TYPE_ARRAY(Test_State_Array1, 7, 4);
+
+} // namespace dyablo
 
 TEST(Test_Array_State, Test_Ops)
 {
