@@ -22,7 +22,7 @@ public:
         Timers& timers )
   : 
     foreach_cell(foreach_cell),
-    n_tiles(configMap.getValue<real_t>("cosmology", "n_tiles", 1)),
+    n_tiles(configMap.getValue<std::vector<uint32_t>>("cosmology", "n_tiles", {1,1,1})),
     gamma0(configMap.getValue<real_t>("hydro", "gamma0", 1.4)),
     smallr(configMap.getValue<real_t>("hydro", "smallr", 1e-10)),
     smallc(configMap.getValue<real_t>("hydro", "smallc", 1e-10)),
@@ -62,13 +62,15 @@ public:
 
     auto code_time = Units::code_units().getUnit(Units::s());
     auto code_length = Units::code_units().getUnit(Units::m());
+    int ndim = foreach_cell.getDim();
 
-    DYABLO_ASSERT_HOST_RELEASE( 0 == (n_tiles*header.nx)%foreach_cell.blockSize()[IX], "Block size (x) is not compatible with grafic file" );
-    DYABLO_ASSERT_HOST_RELEASE( 0 == (n_tiles*header.ny)%foreach_cell.blockSize()[IY], "Block size (y) is not compatible with grafic file" );
-    DYABLO_ASSERT_HOST_RELEASE( 0 == (n_tiles*header.nz)%foreach_cell.blockSize()[IZ], "Block size (z) is not compatible with grafic file" );
-    set_or_check( "amr", "coarse_oct_resolution_x", n_tiles*header.nx/foreach_cell.blockSize()[IX] );
-    set_or_check( "amr", "coarse_oct_resolution_y", n_tiles*header.ny/foreach_cell.blockSize()[IY] );
-    set_or_check( "amr", "coarse_oct_resolution_z", n_tiles*header.nz/foreach_cell.blockSize()[IZ] );
+    DYABLO_ASSERT_HOST_RELEASE(int(n_tiles.size()) == ndim, "n_tiles should be of length " << ndim << ", got instead " << n_tiles.size());
+    DYABLO_ASSERT_HOST_RELEASE( 0 == (n_tiles[0]*header.nx)%foreach_cell.blockSize()[IX], "Block size (x) is not compatible with grafic file" );
+    DYABLO_ASSERT_HOST_RELEASE( 0 == (n_tiles[1]*header.ny)%foreach_cell.blockSize()[IY], "Block size (y) is not compatible with grafic file" );
+    DYABLO_ASSERT_HOST_RELEASE( 0 == (n_tiles[2]*header.nz)%foreach_cell.blockSize()[IZ], "Block size (z) is not compatible with grafic file" );
+    set_or_check( "amr", "coarse_oct_resolution_x", n_tiles[0]*header.nx/foreach_cell.blockSize()[IX] );
+    set_or_check( "amr", "coarse_oct_resolution_y", n_tiles[1]*header.ny/foreach_cell.blockSize()[IY] );
+    set_or_check( "amr", "coarse_oct_resolution_z", n_tiles[2]*header.nz/foreach_cell.blockSize()[IZ] );
     this->xmin = header.xo * Units::Mpc().convert_to( code_length );
     set_or_check( "mesh", "xmin", this->xmin );
     this->ymin = header.yo * Units::Mpc().convert_to( code_length );
@@ -98,11 +100,11 @@ public:
 
     real_t dx = (header.dx * Units::Mpc()).convert_to(code_length);
     set_or_check( "cosmology", "dx", dx );
-    this->xmax = xmin + n_tiles*header.nx * dx;
+    this->xmax = xmin + n_tiles[0]*header.nx * dx;
     set_or_check( "mesh", "xmax", xmax  );
-    this->ymax = ymin + n_tiles*header.ny * dx;
+    this->ymax = ymin + n_tiles[1]*header.ny * dx;
     set_or_check( "mesh", "ymax", ymax  );
-    this->zmax = zmin + n_tiles*header.nz * dx;
+    this->zmax = zmin + n_tiles[2]*header.nz * dx;
     set_or_check( "mesh", "zmax", zmax  );
 
     real_t four_pi_G = configMap.getValue<real_t>("gravity", "4_Pi_G", 4 * M_PI * Units::constant_to_code_units(Units::NEWTON_G()));
@@ -110,7 +112,7 @@ public:
 
     {
       // Mean mass for a raw cell used for refinement
-      double mass0 = rhoc * omegam * (dx * dx * dx) / (n_tiles * n_tiles * n_tiles);
+      double mass0 = rhoc * omegam * (dx * dx * dx) / (n_tiles[0] * n_tiles[1] * n_tiles[2]);
       std::cout << "mean mass per cell (code Units)=" << mass0 << std::endl;
 
       real_t mass_coarsen_factor = configMap.getValue<real_t>("cosmology", "mass_coarsen_factor", 0.1);
@@ -287,7 +289,7 @@ private:
   real_t H0;
   real_t rhoc;
 
-  int32_t n_tiles;
+  std::vector<uint32_t> n_tiles;
   real_t gamma0;
   real_t smallr,smallc,smallp;
 
