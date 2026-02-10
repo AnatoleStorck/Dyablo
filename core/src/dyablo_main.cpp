@@ -38,10 +38,32 @@ int main(int argc, char *argv[])
       unit_mass = configMap.getValue<Units::Mass>("units", "mass");
     }
     
+    auto unit_mol = Units::mol();
+    if( configMap.hasValue("units","particle_density") )
+    {
+      using ParticleDensity = decltype( Units::atom()/Units::m3() );
+      auto unit_particle_density = configMap.getValue<ParticleDensity>("units", "particle_density");
+      unit_mol = unit_particle_density * unit_length.pow<3>();
+    }
+    else if(configMap.hasValue("units","mol"))
+    {
+      unit_mol = configMap.getValue<Units::Mol>("units", "mol");
+    }
+    
+
+    auto unit_current = Units::Ampere();
+    auto unit_temp = Units::Kelvin();
+    auto unit_luminousIntensity = Units::candela();
+
+
     Units::code_units_init( Units::UnitSystem(
         unit_time,
         unit_length,
-        unit_mass
+        unit_mass,
+        unit_current,
+        unit_temp,
+        unit_mol,
+        unit_luminousIntensity
       ));
   }
   DyabloTimeLoop simulation( configMap );
