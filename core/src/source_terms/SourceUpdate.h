@@ -9,6 +9,7 @@ namespace dyablo {
 class SourceUpdate_Cooling_FF;
 class SourceUpdate_GLM;
 class SourceUpdate_Photons_Beam;
+class SourceUpdate_Photons_Stromgren;
 
 template< typename Policy >
 class SourceUpdate_cooling_grackle_table;
@@ -22,7 +23,7 @@ inline bool dyablo::SourceUpdateFactory::init()
   DECLARE_REGISTERED(dyablo::SourceUpdate_Cooling_FF);
   DECLARE_REGISTERED(dyablo::SourceUpdate_GLM);
   DECLARE_REGISTERED(dyablo::SourceUpdate_Photons_Beam);
-
+  DECLARE_REGISTERED(dyablo::SourceUpdate_Photons_Stromgren);
   DECLARE_REGISTERED(dyablo::SourceUpdate_cooling_grackle_table<dyablo::HyperbolicPolicy_Hydro>);
   DECLARE_REGISTERED(dyablo::SourceUpdate_cooling_grackle_table<dyablo::HyperbolicPolicy_GLMMHD>);
 
