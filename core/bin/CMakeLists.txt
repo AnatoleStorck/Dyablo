@@ -85,6 +85,10 @@ configure_file(test_kelvin_helmholtz_block.ini test_kelvin_helmholtz_block.ini C
 configure_file(visu_kelvin_helmholtz_block.pvsm visu_kelvin_helmholtz_block.pvsm COPYONLY)
 # RT test
 configure_file(../../settings/cosmo/beam.ini beam.ini COPYONLY)
+configure_file(../../settings/cosmo/stromgren_cosmo.ini stromgren_cosmo.ini COPYONLY)
+configure_file(../../settings/cosmo/stromgren.ini stromgren.ini COPYONLY)
+configure_file(../../settings/cosmo/validate_stromgren.py validate_stromgren.py COPYONLY)
+configure_file(../../settings/cosmo/validate_stromgren_cosmo.py validate_stromgren_cosmo.py COPYONLY)
 
 # Heat conduction
 configure_file(test_heat_conduction.ini test_heat_conduction.ini COPYONLY)
