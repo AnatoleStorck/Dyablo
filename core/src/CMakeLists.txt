@@ -43,6 +43,7 @@ set( core_src
     ${CMAKE_CURRENT_SOURCE_DIR}/io/derived_fields/DerivedFields_divB.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Photons_Beam.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Photons_Stromgren.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Ionization_Stromgren.cpp
 )
 
 set( ic_src
