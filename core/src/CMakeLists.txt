@@ -71,6 +71,7 @@ set( ic_src
     ${CMAKE_CURRENT_SOURCE_DIR}/init/wholesun/InitialConditions_tri_layer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/init/InitialConditions_zeldovitch_pancake.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/init/InitialConditions_zeldovitch_particles.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/init/rt/InitialConditions_stromgren.cpp
 )
 
 set( mpi_src

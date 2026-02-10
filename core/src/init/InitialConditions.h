@@ -41,6 +41,7 @@ class InitialConditions_particles_uniform;
 
 // Cosmology
 class InitialConditions_grafic_fields;
+class InitialConditions_stromgren;
 
 // Convection
 class AnalyticalFormula_C91;
@@ -87,6 +88,7 @@ bool dyablo::InitialConditionsFactory::init()
   // Cosmo
   DECLARE_REGISTERED( dyablo::InitialConditions_analytical<dyablo::AnalyticalFormula_Zeldovitch_pancake> );
   DECLARE_REGISTERED( dyablo::InitialConditions_zeldovitch_particles );
+  DECLARE_REGISTERED( dyablo::InitialConditions_stromgren );
 
   DECLARE_REGISTERED( dyablo::InitialConditions_grafic_fields );
 
