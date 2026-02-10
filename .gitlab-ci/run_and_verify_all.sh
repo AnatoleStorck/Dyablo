@@ -70,6 +70,9 @@ run_and_verify test_cooling.ini "validate_cooling.py cooling_main.xmf 0.05 ../..
 
 run_and_verify test_star_feedback.ini "validate_star_feedback.py feedback_main.xmf 1e-10" star_feedback
 
+run_and_verify stromgren.ini "validate_stromgren.py stromgren_main.xmf 5e-2 ../../../strom/stromgren.png" strom 
+run_and_verify stromgren_cosmo.ini "validate_stromgren_cosmo.py stromgren_main.xmf 0.1 ../../../strom_cosmo/stromgren.png" strom_cosmo
+
 echo "${err_count}/${run_count} runs failed"
 
 
