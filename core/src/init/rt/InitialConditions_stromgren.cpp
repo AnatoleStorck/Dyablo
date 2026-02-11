@@ -24,8 +24,7 @@ namespace dyablo {
         real_t n_h = n_b * dx * dx * dx;
 
         // Compute photon rate
-        real_t mol_to_atoms = Units::code_units().getUnit<Units::Mol>().convert_to(Units::atom());
-        real_t spawn_rate = n_gamma * n_h / t_s / mol_to_atoms;  // in code units atoms/Myr
+        real_t spawn_rate = n_gamma * n_h / t_s;  // in code units atoms/Myr
         configMap.getValue<real_t>("stromgren", "spawn_rate", spawn_rate);
 
         // Compute Vmax and Rmax

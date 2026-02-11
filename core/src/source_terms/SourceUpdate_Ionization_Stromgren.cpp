@@ -180,15 +180,7 @@ public:
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
-    using PhotonDensity = decltype(Units::mol()/Units::m3());
-    using AtomDensity = PhotonDensity;
-
-    auto code_atom_density = Units::code_units().getUnit<AtomDensity>();
     real_t proton_mass_cu = Units::constant_to_code_units(Units::PROTON_MASS());
-
-    auto code_length = Units::code_units().getUnit<Units::Length>();
-    // TODO : fix (?) N and nH are not in code units but in atoms / code_length^3
-    auto N_unit = Units::atom() / (code_length*code_length*code_length); 
 
     if(!use_recombination) alphab = 0.0;
     real_t alpha  = alphab; // On the spot approximation
@@ -206,7 +198,7 @@ public:
       real_t nH = rho / proton_mass_cu;   
 
       // Local photon number density
-      real_t N = (Uout.at(iCell_Uout, VarIndex_Chem::Ie_rad) * code_atom_density).convert_to(N_unit);
+      real_t N = Uout.at(iCell_Uout, VarIndex_Chem::Ie_rad);
 
       // Local ionisation fraction
       real_t x_old = Uout.at(iCell_Uout, VarIndex_Chem::Irho_HII)/rho;
@@ -221,7 +213,7 @@ public:
       if(N_new<0) N_new = small_erad;
 
       // Store results
-      Uout.at(iCell_Uout, VarIndex_Chem::Ie_rad) = (N_new * N_unit).convert_to(code_atom_density); 
+      Uout.at(iCell_Uout, VarIndex_Chem::Ie_rad) = N_new; 
       Uout.at(iCell_Uout, VarIndex_Chem::Irho_HII) = rho * xnew;
 
       {
