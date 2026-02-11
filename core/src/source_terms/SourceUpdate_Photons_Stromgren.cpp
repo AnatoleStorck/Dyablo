@@ -11,7 +11,7 @@ private:
   ForeachCell& foreach_cell;
   real_t source_position, spawn_rate_physical, a_stop_emission;
 
-  using SpawnRate = decltype( Units::mol()/Units::s() );
+  using SpawnRate = decltype( 1/Units::s() );
  
 public:
   SourceUpdate_Photons_Stromgren(
@@ -21,7 +21,7 @@ public:
   : foreach_cell(foreach_cell),
     source_position(configMap.getValue_in_code_unit<Units::Length>("stromgren", "source_position", 0.0)),
     // spawn_rate comes from the ini file in the non-cosmo case. In the cosmo case it is computed from physical parameters of the problem (in InitialConditions_stromgren.cpp)
-    spawn_rate_physical(configMap.getValue_in_code_unit<SpawnRate>("stromgren", "spawn_rate", "1e56 atom/s")),
+    spawn_rate_physical(configMap.getValue_in_code_unit<SpawnRate>("stromgren", "spawn_rate", "1e56 /s")),
     a_stop_emission(configMap.getValue<real_t>( "rad", "a_stop_emission", 1.0 ))
   {}
 
