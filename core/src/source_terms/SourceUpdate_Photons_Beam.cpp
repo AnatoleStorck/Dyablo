@@ -13,7 +13,7 @@ private:
   real_t spawn_rate;
   real_t c_rad;
 
-  using SpawnRate = decltype( Units::mol()/Units::code_units().getUnit<Units::Time>() );
+  using SpawnRate = decltype( 1/Units::Time(0) );
 
 public:
   SourceUpdate_Photons_Beam(
@@ -22,13 +22,12 @@ public:
         Timers& timers )
   :  foreach_cell(foreach_cell),
      source_position(configMap.getValue_in_code_unit<Units::Length>("rad", "source_position", 5.0)),
-     spawn_rate(configMap.getValue_in_code_unit<SpawnRate>("rad", "spawn_rate", "1e56 atom/s")),
+     spawn_rate(configMap.getValue_in_code_unit<SpawnRate>("rad", "spawn_rate", "1e56 /s")),
      c_rad( configMap.getValue_in_code_unit<Units::Velocity>("rad", "c_rad", "speedoflight") )
   { }
 
   void update( UserData &U, ScalarSimulationData& scalar_data)
   {
-
     using pos_t = ForeachCell::CellMetaData::pos_t;
 
     real_t dt = scalar_data.get<real_t>("dt");
