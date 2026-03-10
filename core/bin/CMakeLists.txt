@@ -103,3 +103,6 @@ configure_file(../../settings/cooling/validate_cooling.py validate_cooling.py CO
 configure_file(test_star_feedback.ini test_star_feedback.ini COPYONLY)
 configure_file(validate_star_feedback.py validate_star_feedback.py COPYONLY)
 
+if (DYABLO_USE_PRISM)
+  configure_file(${CMAKE_SOURCE_DIR}/src/source_terms/PRISM/test_PRISM.ini  test_PRISM.ini COPYONLY)
+endif()

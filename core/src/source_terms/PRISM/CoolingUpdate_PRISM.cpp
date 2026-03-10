@@ -59,13 +59,6 @@ namespace PRISM {
           elems2passive[index] = ielems;
           iions += nions_this_element;
           ielems++;
-
-          // std::cout << "Element: " << elem_name
-          //           << ", Index: " << index
-          //           << ", nions: " << nions_this_element
-          //           << ", ions2passive: " << ions2passive[index]
-          //           << ", elems2passive: " << elems2passive[index]
-          //           << std::endl;
       };
 
       for (auto i = 0; i < MAX_ELEMENTS; ++i) {
@@ -149,7 +142,7 @@ public:
         unit_density( configMap.getValue<real_t>("units", "density", 1.0) ),
         unit_length( configMap.getValue<real_t>("units", "length", 1.0) ),
         unit_photon_number( configMap.getValue<real_t>("units", "photon_number", 1.0) ),
-        rtz_solver()
+        rtz_solver(data_path)
   {
     PRISM::parseIonInputs(ions, this->nions, this->elems2passive, this->ions2passive, this->ion_counts);
   };
@@ -158,9 +151,12 @@ public:
                 ScalarSimulationData& scalar_data)
   {
     const Policy policy( this->policy_params, scalar_data );
-    // Update UVB
+    // Get simulation state
     const real_t aexp = cosmo_run ? scalar_data.get<real_t>("aexp") : 1;
     const real_t redshift = 1e0/aexp - 1e0;
+    const real_t dt = scalar_data.get<real_t>("dt");
+
+    // Update UV background if needed
     rtz_solver.need_to_update_UVB(redshift);
 
     // Hydro state accessors
@@ -183,6 +179,9 @@ public:
     auto K = Units::Kelvin();
     auto code_density  = Units::code_units().getUnit<Units::Density>();
     auto code_pressure = Units::code_units().getUnit<Units::Pressure>();
+    auto code_time     = Units::code_units().getUnit<Units::Time>();
+
+    real_t dt_s = (dt * code_time).convert_to(Units::second());
 
 
     // ------ Call PRISM cooling update on each cell ------
@@ -227,7 +226,7 @@ public:
 
         // TODO: CO
         real_t nCO = 0;
-        real_t out_Tmu, out_mu, out_ddt;
+        real_t out_T_over_mu, out_mu, out_ddt;
         int out_its;
 
         // Physics flags
@@ -245,10 +244,11 @@ public:
           T_over_mu,
           metallicity,
           aexp,
+          dt_s,
           nelements_loc,
           xions_loc,
           nCO,
-          out_Tmu,
+          out_T_over_mu,
           out_mu,
           out_its,
           out_ddt,
@@ -278,10 +278,10 @@ public:
         }
 
         // Recompute conservative variables
-        q.p = (out_Tmu * Units::Kelvin() * rho_physical / mp_over_kb).convert_to(code_pressure);
+        q.p = (out_T_over_mu * Units::Kelvin() * rho_physical / mp_over_kb).convert_to(code_pressure);
         
         u = policy.primToCons(q);
-        policy.setConsState(Uin, iCell, u); 
+        policy.setConsState(Uin, iCell, u);
       }
     );
   }
