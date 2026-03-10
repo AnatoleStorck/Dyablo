@@ -12,3 +12,6 @@
 [submodule "external/units"]
 	path = external/units
 	url = https://github.com/LLNL/units.git
+[submodule "external/gizmo_rtz"]
+	path = core/src/source_terms/PRISM/gizmo_rtz
+	url = git@github.com:HarleyKatz/gizmo_rtz.git

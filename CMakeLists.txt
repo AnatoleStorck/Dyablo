@@ -32,6 +32,7 @@ option (DYABLO_USE_MPI "Activate / want MPI build" ON)
 option (DYABLO_USE_HDF5 "build HDF5 input/output support" ON)
 option (DYABLO_USE_MPI_CUDA_AWARE_ENFORCED "Some MPI cuda-aware implementation are not well detected; use this to enforce" OFF)
 set( DYABLO_CXX_COMPILER  ${CMAKE_CXX_COMPILER} CACHE STRING "compiler used to build dyablo")
+option (DYABLO_USE_PRISM "build with PRISM source term support" OFF)
 option (DYABLO_USE_INTERNAL_KOKKOS "Use internal Kokkos from external/kokkos" ON)
 option (Kokkos_ENABLE_CUDA "Enable Kokkos::CUDA backend" OFF)
 option (Kokkos_ENABLE_SYCL "Enable Kokkos::SYCL backend" OFF)
@@ -96,6 +97,7 @@ list (APPEND DYABLO_CMAKE_ARGS_
   -DDYABLO_USE_MPI=${DYABLO_USE_MPI}
   -DDYABLO_USE_HDF5=${DYABLO_USE_HDF5}
   -DDYABLO_USE_MPI_CUDA_AWARE_ENFORCED=${DYABLO_USE_MPI_CUDA_AWARE_ENFORCED}
+  -DDYABLO_USE_PRISM=${DYABLO_USE_PRISM}
   -DDYABLO_USE_INTERNAL_KOKKOS=${DYABLO_USE_INTERNAL_KOKKOS}
   -DKokkos_ENABLE_CUDA=${Kokkos_ENABLE_CUDA}
   -DKokkos_ENABLE_SYCL=${Kokkos_ENABLE_SYCL}
