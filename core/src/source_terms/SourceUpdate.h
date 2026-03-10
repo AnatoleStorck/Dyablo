@@ -15,8 +15,10 @@ class SourceUpdate_Ionization_Stromgren;
 template< typename Policy >
 class SourceUpdate_cooling_grackle_table;
 
+#ifdef DYABLO_USE_PRISM
 template< typename Policy >
 class CoolingUpdate_PRISM;
+#endif
 
 } //namespace dyablo
 
@@ -32,7 +34,9 @@ inline bool dyablo::SourceUpdateFactory::init()
   DECLARE_REGISTERED(dyablo::SourceUpdate_cooling_grackle_table<dyablo::HyperbolicPolicy_Hydro>);
   DECLARE_REGISTERED(dyablo::SourceUpdate_cooling_grackle_table<dyablo::HyperbolicPolicy_GLMMHD>);
 
+#ifdef DYABLO_USE_PRISM
   DECLARE_REGISTERED(dyablo::CoolingUpdate_PRISM<dyablo::HyperbolicPolicy_Hydro>);
+#endif
 
   dyablo::load_dyablo_plugins_lib();
   return true;
