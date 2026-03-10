@@ -7,6 +7,24 @@
 
 
 namespace PRISM {
+  std::string int2roman(int num) {
+      std::vector<std::pair<int, std::string>> value_symbols = {
+          {1, "I"}, {4, "IV"}, {5, "V"}, {9, "IX"},
+          {10, "X"}, {40, "XL"}, {50, "L"}, {90, "XC"},
+          {100, "C"}, {400, "CD"}, {500, "D"}, {900, "CM"},
+          {1000, "M"}
+      };
+
+      std::string roman;
+      for (const auto& [value, symbol] : value_symbols) {
+          while (num >= value) {
+              roman += symbol;
+              num -= value;
+          }
+      }
+      return roman;
+  }
+
   inline void parseIonInputs(
       const std::vector<std::string>& ions,
       std::array<int, MAX_ELEMENTS>& nions,
@@ -76,7 +94,6 @@ namespace PRISM {
       check_set("Si", nions, elems2passive, ions2passive, 14);
       check_set( "S", nions, elems2passive, ions2passive, 16);
       check_set("Fe", nions, elems2passive, ions2passive, 26);
-
   }
 }
 
@@ -161,7 +178,7 @@ public:
       // Add in element abundances
       for (const auto& [elem, _val]: ion_counts) {
         std::ostringstream oss;
-        oss << "n" << elem << "_next";
+        oss << "n" << elem; //  << "_next";
         passive_inout.push_back({oss.str(), ipassive});
         ipassive++;
       }
@@ -169,7 +186,9 @@ public:
       for (const auto& [elem, _val]: ion_counts) {
         for (int iion = 0; iion < ion_counts[elem]; iion++) {
           std::ostringstream oss;
-          oss << "x" << elem << "_" << iion << "_next";
+          // Convert iion to roman numeral
+          std::string iion_roman = PRISM::int2roman(iion+1);
+          oss << "x" << elem << "_" << iion_roman; // << "_next";
           passive_inout.push_back({oss.str(), ipassive});
           ipassive++;
         }
@@ -191,6 +210,9 @@ public:
 
     real_t dt_s = (dt * code_time).convert_to(Units::second());
 
+    const std::array<int, MAX_ELEMENTS> &nions = this->nions;
+    const std::array<int, MAX_ELEMENTS> &elems2passive = this->elems2passive;
+    const std::array<int, MAX_ELEMENTS> &ions2passive = this->ions2passive;
 
     // ------ Call PRISM cooling update on each cell ------
     foreach_cell.foreach_cell( "CoolingUpdate_PRISM", Uin.getShape(),
@@ -202,8 +224,7 @@ public:
         // Initial state
         auto rho_physical = Units::supercomoving_to_physical<Units::Density>(q.rho, aexp) * code_density;
         auto P_physical = Units::supercomoving_to_physical<Units::Pressure>(q.p, aexp) * code_pressure;
-        real_t nH = (rho_physical * XH).convert_to(mp_per_cc);
-        real_t log_nH = log10(nH);
+        real_t rho = rho_physical.convert_to(mp_per_cc);
 
         // Compute T/µ
         real_t T_over_mu = (P_physical / rho_physical * mp_over_kb).convert_to(K);
@@ -213,10 +234,10 @@ public:
 
         // Get element number densities
         std::array<double, MAX_ELEMENTS> nelements_loc{};
-        nelements_loc[1] = nH;
-        for (auto i = 2; i < MAX_ELEMENTS; ++i) {
-          // TODO: only keep selected elements
-          nelements_loc[i] = nH * Uinout_passive.at(iCell, elems2passive[i]);
+        for (auto i = 1; i < MAX_ELEMENTS; ++i) {
+          if (ions2passive[i] == -1) continue; // Skip elements not in network
+          int index = elems2passive[i];
+          nelements_loc[i] = Uinout_passive.at_ivar(iCell, index);
         }
 
         // Get ionization fractions
@@ -224,9 +245,10 @@ public:
         {
           int iion = 0;
           for (auto i = 1; i < MAX_ELEMENTS; ++i) {
-            // TODO: only keep selected elements
-            for (auto j = 0; j < i; ++j) {
-              xions_loc[iion] = Uinout_passive.at_ivar(iCell, ions2passive[i] + j);
+            if (ions2passive[i] == -1) continue; // Skip elements not in network
+            for (auto j = 0; j < nions[i]; ++j) {
+              int index = ions2passive[i] + j;
+              xions_loc[iion] = Uinout_passive.at_ivar(iCell, index);
               iion++;
             }
           }
@@ -266,20 +288,20 @@ public:
         );
 
         // Set element number densities
-        nH = nelements_loc[1];
-        Uinout_passive.at(iCell, elems2passive[1]) = nH;
-        for (auto i = 2; i < MAX_ELEMENTS; ++i) {
-          // TODO: only keep selected elements
-          Uinout_passive.at(iCell, elems2passive[i]) = nelements_loc[i] / nH;
+        for (auto i = 1; i < MAX_ELEMENTS; ++i) {
+          if (ions2passive[i] == -1) continue; // Skip elements not in network
+          int index = elems2passive[i];
+          Uinout_passive.at_ivar(iCell, index) = nelements_loc[i];
         }
 
         // Get ionization fractions
         {
           int iion = 0;
           for (auto i = 1; i < MAX_ELEMENTS; ++i) {
-            // TODO: only keep selected elements
-            for (auto j = 0; j < i; ++j) {
-              Uinout_passive.at_ivar(iCell, ions2passive[i] + j) = xions_loc[iion];
+            if (ions2passive[i] == -1) continue; // Skip elements not in network
+            for (auto j = 0; j < nions[i]; ++j) {
+              int index = ions2passive[i] + j;
+              Uinout_passive.at_ivar(iCell, index) = xions_loc[iion];
               iion++;
             }
           }
