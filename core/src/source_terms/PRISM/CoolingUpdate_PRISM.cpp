@@ -114,10 +114,6 @@ private:
   int ion_counts_total = 0;
 
   real_t T_blackbody;
-  real_t unit_time;
-  real_t unit_density;
-  real_t unit_length;
-  real_t unit_photon_number;
 
   RTZ_type rtz_solver;
 
@@ -138,10 +134,6 @@ public:
         // HM12_UVB_data(PRISM::load_UVB_data(UVB_table_path)),
         ions( configMap.getValue<std::vector<std::string>>("cooling", "ions" ) ),
         T_blackbody( configMap.getValue<real_t>("cooling", "T_blackbody", 1e4) ),
-        unit_time( configMap.getValue<real_t>("units", "time", 1.0) ),
-        unit_density( configMap.getValue<real_t>("units", "density", 1.0) ),
-        unit_length( configMap.getValue<real_t>("units", "length", 1.0) ),
-        unit_photon_number( configMap.getValue<real_t>("units", "photon_number", 1.0) ),
         rtz_solver(data_path)
   {
     PRISM::parseIonInputs(ions, this->nions, this->elems2passive, this->ions2passive, this->ion_counts);
@@ -164,11 +156,27 @@ public:
 
     // Ion abundances and ionization fractions accessors
     std::vector<UserData::FieldAccessor::FieldInfo> passive_inout;
-    for (auto ipassive = 0; ipassive < int(ion_counts.size() + ions.size()); ++ipassive) {
+    {
+      int ipassive = 0;
+      // Add in element abundances
+      for (const auto& [elem, _val]: ion_counts) {
         std::ostringstream oss;
-        oss << "passive_scalar_" << ipassive << "_next";
+        oss << "n" << elem << "_next";
         passive_inout.push_back({oss.str(), ipassive});
+        ipassive++;
+      }
+      // Add in xions
+      for (const auto& [elem, _val]: ion_counts) {
+        for (int iion = 0; iion < ion_counts[elem]; iion++) {
+          std::ostringstream oss;
+          oss << "x" << elem << "_" << iion << "_next";
+          passive_inout.push_back({oss.str(), ipassive});
+          ipassive++;
+        }
+      }
+
     }
+
     UserData::FieldAccessor Uinout_passive = U.getAccessor( passive_inout );
 
     // Create units
@@ -290,7 +298,7 @@ public:
 
 FACTORY_REGISTER( dyablo::SourceUpdateFactory,
                   dyablo::CoolingUpdate_PRISM<dyablo::HyperbolicPolicy_Hydro>,
-                  "CoolingUpdate_PRISM");
+                  "CoolingUpdate_PRISM_hydro");
 
 // namespace dyablo {
 

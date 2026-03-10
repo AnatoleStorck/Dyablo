@@ -131,4 +131,5 @@ add_subdirectory(utils)
 # subdirectories for PRISM model
 if (DYABLO_USE_PRISM)
     add_subdirectory(source_terms/PRISM)
+    target_link_libraries( dyablo_core PUBLIC dyablo::PRISM )
 endif()

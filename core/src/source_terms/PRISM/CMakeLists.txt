@@ -1,7 +1,7 @@
 add_library(PRISM "")
 
 target_sources(PRISM
-  PUBLIC
+  PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/CoolingUpdate_PRISM.cpp
   )
 
