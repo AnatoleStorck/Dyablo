@@ -308,8 +308,7 @@ public:
 
         // TODO: CO
         real_t nCO = 0;
-        real_t out_T_over_mu, out_mu, out_ddt;
-        int out_its;
+        real_t out_T_over_mu, out_mu;
 
         // Physics flags
         PhysicsFlags flags {
@@ -343,7 +342,7 @@ public:
           flags
         );
 
-        printf("\nConverged in %d iterations, T_over_mu(old) = %g, (new) = %g xHI=%g xHII=%g xHeI=%g xHeII=%g xHeIII=%g\n", out_its, T_over_mu_old, out_T_over_mu, xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4]);
+        printf("\nConverged to T_over_mu(old) = %g, (new) = %g xHI=%g xHII=%g xHeI=%g xHeII=%g xHeIII=%g\n", T_over_mu_old, out_T_over_mu, xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4]);
 
         // Set element number densities
         for (auto i = 1; i < MAX_ELEMENTS; ++i) {
