@@ -116,10 +116,10 @@ namespace PRISM {
 }
 
 namespace dyablo {
-constexpr bool constant_temperature = false;
+constexpr bool constant_temperature = true;
 constexpr bool include_H2 = true;
 constexpr bool include_CO = false;
-constexpr bool rt_advect = false;
+constexpr bool rt_advect = true;
 constexpr bool include_self_shielding = false;
 
 using RTZ_type = RTZ<constant_temperature,include_H2,include_CO,rt_advect,include_self_shielding>;
@@ -170,10 +170,11 @@ public:
         data_path(configMap.getValue<std::string>("cooling", "data_path")),
         // HM12_UVB_data(PRISM::load_UVB_data(UVB_table_path)),
         ions( configMap.getValue<std::vector<std::string>>("cooling", "ions" ) ),
-        T_blackbody( configMap.getValue<real_t>("cooling", "T_blackbody", 1e4) ),
+        T_blackbody( configMap.getValue<real_t>("cooling", "T_blackbody", 4e4) ),
         rtz_solver(data_path)
   {
     PRISM::parseIonInputs(ions, this->nions_and_molecules, this->elems2passive, this->ions2passive, this->ion_counts, this->molecule_counts, include_H2);
+    rtz_solver.set_photon_groups({13.6}, {500});
   };
 
   void update( UserData &U,
@@ -187,6 +188,7 @@ public:
 
     // Update UV background if needed
     rtz_solver.need_to_update_UVB(redshift);
+    rtz_solver.need_to_update_cross_sections(T_blackbody);
 
     // Hydro state accessors
     dyablo::UserData::FieldAccessor Uin = policy.getUout(U);
@@ -322,9 +324,11 @@ public:
 
         // TODO: get metallicity
         real_t metallicity = 1e-40;
-  
+
+        T_over_mu = 1e4;
+
         double T_over_mu_old = T_over_mu;
-        printf("T0 = %g nH = %g nHe = %g xHI=%g xHII=%g xH2=%g, xHeI=%g xHeII=%g xHeIII=%g\n", T_over_mu, nelements_loc[1], nelements_loc[2], xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4], xions_loc[5]);
+        // printf("T0 = %g nH = %g nHe = %g xHI=%g xHII=%g xH2=%g, xHeI=%g xHeII=%g xHeIII=%g\n", T_over_mu, nelements_loc[1], nelements_loc[2], xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4], xions_loc[5]);
         rtz_solver.solve_chemistry_and_cooling(
           T_over_mu,
           metallicity,
@@ -342,7 +346,7 @@ public:
           flags
         );
 
-        printf("\nConverged to T_over_mu(old) = %g, (new) = %g xHI=%g xHII=%g xHeI=%g xHeII=%g xHeIII=%g\n", T_over_mu_old, out_T_over_mu, xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4]);
+        // printf("\nConverged to T_over_mu(old) = %g, (new) = %g xHI=%g xHII=%g xHeI=%g xHeII=%g xHeIII=%g\n", T_over_mu_old, out_T_over_mu, xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4]);
 
         // Set element number densities
         for (auto i = 1; i < MAX_ELEMENTS; ++i) {
