@@ -298,13 +298,13 @@ public:
 
         // Get Photon Stuff
         std::array<double, N_GROUPS> N_PHOT{};
-        std::array<std::array<double, N_GROUPS>, 3> F_PHOT{};
+        std::array<std::array<double, 3>, N_GROUPS> F_PHOT{};
 
         for (auto i = 0; i < N_GROUPS; ++i) {
           int index = 4 * i; // TODO: don't hardcode this
           N_PHOT[i] = Uin_rt.at(iCell, index);
           for (auto j = 0; j < 3; ++j) {
-            F_PHOT[j][i] = Uin_rt.at(iCell, index + j);
+            F_PHOT[i][j] = Uin_rt.at(iCell, index + j);
           }
         }
 
@@ -328,6 +328,7 @@ public:
         T_over_mu = 1e4;
 
         double T_over_mu_old = T_over_mu;
+        double N_PHOT_old = N_PHOT[0];
         // printf("T0 = %g nH = %g nHe = %g xHI=%g xHII=%g xH2=%g, xHeI=%g xHeII=%g xHeIII=%g\n", T_over_mu, nelements_loc[1], nelements_loc[2], xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4], xions_loc[5]);
         rtz_solver.solve_chemistry_and_cooling(
           T_over_mu,
@@ -346,7 +347,7 @@ public:
           flags
         );
 
-        // printf("\nConverged to T_over_mu(old) = %g, (new) = %g xHI=%g xHII=%g xHeI=%g xHeII=%g xHeIII=%g\n", T_over_mu_old, out_T_over_mu, xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4]);
+        printf("\nConverged to T_over_mu(old) = %g, (new) = %g xHI=%g xHII=%g xHeI=%g xHeII=%g xHeIII=%g N_phot(old) = %g, (new) = %g\n", T_over_mu_old, out_T_over_mu, xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4], N_PHOT_old, N_PHOT[0]);
 
         // Set element number densities
         for (auto i = 1; i < MAX_ELEMENTS; ++i) {
@@ -372,7 +373,7 @@ public:
           int index = 4 * i; // TODO: don't hardcode this
           Uout_rt.at(iCell, index) = N_PHOT[i];
           for (auto j = 0; j < 3; ++j) {
-            Uout_rt.at(iCell, index + j) = F_PHOT[j][i];
+            Uout_rt.at(iCell, index + j) = F_PHOT[i][j];
           }
         }
 
