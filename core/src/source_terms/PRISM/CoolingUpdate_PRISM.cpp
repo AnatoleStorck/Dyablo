@@ -203,7 +203,7 @@ public:
         std::ostringstream oss;
         oss << "n" << elem;
         passive_in.push_back({oss.str(), ipassive});
-        oss << "_next";
+        // oss << "_next";
         passive_out.push_back({oss.str(), ipassive});
         ipassive++;
       }
@@ -215,7 +215,7 @@ public:
           std::string iion_roman = PRISM::int2roman(iion+1);
           oss << "x" << elem << "_" << iion_roman;
           passive_in.push_back({oss.str(), ipassive});
-          oss << "_next";
+          // oss << "_next";
           passive_out.push_back({oss.str(), ipassive});
           ipassive++;
         }
@@ -223,7 +223,7 @@ public:
           // Add H2
           std::string field_name = "xH2";
           passive_in.push_back({field_name.c_str(), ipassive});
-          passive_out.push_back({(field_name + "_next").c_str(), ipassive});
+          passive_out.push_back({field_name.c_str(), ipassive});
           ipassive++;
         }
       }
@@ -238,7 +238,7 @@ public:
     DYABLO_ASSERT_HOST_RELEASE(N_GROUPS == 1, "Only N_GROUPS=1 is currently supported");
     DYABLO_ASSERT_HOST_RELEASE(foreach_cell.getDim() == 3, "Only 3D is currently supported");
 
-    UserData::FieldAccessor Uin_rt = U.getAccessor( {{"e_rad", 0}, {"fx_rad", 1}, {"fy_rad", 2}, {"fz_rad", 3}} );
+    UserData::FieldAccessor Uin_rt = U.getAccessor( {{"e_rad_next", 0}, {"fx_rad_next", 1}, {"fy_rad_next", 2}, {"fz_rad_next", 3}} );
     UserData::FieldAccessor Uout_rt = U.getAccessor( {{"e_rad_next", 0}, {"fx_rad_next", 1}, {"fy_rad_next", 2}, {"fz_rad_next", 3}} );
 
     // Create units
@@ -347,7 +347,7 @@ public:
           flags
         );
 
-        printf("\nConverged to T_over_mu(old) = %g, (new) = %g xHI=%g xHII=%g xHeI=%g xHeII=%g xHeIII=%g N_phot(old) = %g, (new) = %g\n", T_over_mu_old, out_T_over_mu, xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4], N_PHOT_old, N_PHOT[0]);
+        // printf("\nConverged to T_over_mu(old) = %g, (new) = %g xHI=%g xHII=%g xHeI=%g xHeII=%g xHeIII=%g N_phot(old) = %g, (new) = %g\n", T_over_mu_old, out_T_over_mu, xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4], N_PHOT_old, N_PHOT[0]);
 
         // Set element number densities
         for (auto i = 1; i < MAX_ELEMENTS; ++i) {
