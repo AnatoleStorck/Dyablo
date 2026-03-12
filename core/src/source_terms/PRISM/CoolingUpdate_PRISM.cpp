@@ -231,6 +231,14 @@ public:
     UserData::FieldAccessor Uin_passive = U.getAccessor( passive_in );
     UserData::FieldAccessor Uout_passive = U.getAccessor( passive_out );
 
+
+    // RT accessors    std::vector<UserData::FieldAccessor::FieldInfo> rt_in;
+    DYABLO_ASSERT_HOST_RELEASE(N_GROUPS == 1, "Only N_GROUPS=1 is currently supported");
+    DYABLO_ASSERT_HOST_RELEASE(foreach_cell.getDim() == 3, "Only 3D is currently supported");
+
+    UserData::FieldAccessor Uin_rt = U.getAccessor( {{"e_rad", 0}, {"fx_rad", 1}, {"fy_rad", 2}, {"fz_rad", 3}} );
+    UserData::FieldAccessor Uout_rt = U.getAccessor( {{"e_rad_next", 0}, {"fx_rad_next", 1}, {"fy_rad_next", 2}, {"fz_rad_next", 3}} );
+
     // Create units
     real_t XH = Units::XH().convert_to(Units::one());
 
@@ -286,6 +294,18 @@ public:
           }
         }
 
+        // Get Photon Stuff
+        std::array<double, N_GROUPS> N_PHOT{};
+        std::array<std::array<double, N_GROUPS>, 3> F_PHOT{};
+
+        for (auto i = 0; i < N_GROUPS; ++i) {
+          int index = 4 * i; // TODO: don't hardcode this
+          N_PHOT[i] = Uin_rt.at(iCell, index);
+          for (auto j = 0; j < 3; ++j) {
+            F_PHOT[i][j] = Uin_rt.at(iCell, index + j);
+          }
+        }
+
         // TODO: CO
         real_t nCO = 0;
         real_t out_T_over_mu, out_mu, out_ddt;
@@ -314,6 +334,8 @@ public:
           nelements_loc,
           xions_loc,
           nCO,
+          N_PHOT,
+          F_PHOT,
           out_T_over_mu,
           out_mu,
           20'000,
@@ -340,6 +362,14 @@ public:
               Uout_passive.at(iCell, index) = xions_loc[iion];
               iion++;
             }
+          }
+        }
+
+        for (auto i = 0; i < N_GROUPS; ++i) {
+          int index = 4 * i; // TODO: don't hardcode this
+          Uout_rt.at(iCell, index) = N_PHOT[i];
+          for (auto j = 0; j < 3; ++j) {
+            Uout_rt.at(iCell, index + j) = F_PHOT[i][j];
           }
         }
 
