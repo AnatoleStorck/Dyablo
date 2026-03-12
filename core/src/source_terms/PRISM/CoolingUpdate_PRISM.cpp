@@ -304,7 +304,7 @@ public:
           int index = 4 * i; // TODO: don't hardcode this
           N_PHOT[i] = Uin_rt.at(iCell, index);
           for (auto j = 0; j < 3; ++j) {
-            F_PHOT[i][j] = Uin_rt.at(iCell, index + j);
+            F_PHOT[i][j] = Uin_rt.at(iCell, index + j + 1);
           }
         }
 
@@ -373,7 +373,7 @@ public:
           int index = 4 * i; // TODO: don't hardcode this
           Uout_rt.at(iCell, index) = N_PHOT[i];
           for (auto j = 0; j < 3; ++j) {
-            Uout_rt.at(iCell, index + j) = F_PHOT[i][j];
+            Uout_rt.at(iCell, index + j + 1) = F_PHOT[i][j];
           }
         }
 
