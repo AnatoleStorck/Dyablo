@@ -3,16 +3,24 @@
 #include "hyperbolic/policy/HyperbolicPolicy_Hydro.h"
 #include "utils/units/Units.h"
 
+#ifdef KOKKOS_ENABLE_CUDA
+#include <cuda_runtime.h>
+#endif
+
 #include "gizmo_rtz/dyablo_api.hpp"
+// Include the implementation so that CUDA device functions (KOKKOS_FUNCTION)
+// are visible within this translation unit, avoiding the need for
+// relocatable device code (-rdc=true).
+#include "gizmo_rtz/dyablo_api.cpp"
 
 
 namespace PRISM {
   std::string int2roman(int num) {
       std::vector<std::pair<int, std::string>> value_symbols = {
-          {1, "I"}, {4, "IV"}, {5, "V"}, {9, "IX"},
-          {10, "X"}, {40, "XL"}, {50, "L"}, {90, "XC"},
-          {100, "C"}, {400, "CD"}, {500, "D"}, {900, "CM"},
-          {1000, "M"}
+          {1000, "M"}, {900, "CM"}, {500, "D"}, {400, "CD"},
+          {100, "C"}, {90, "XC"}, {50, "L"}, {40, "XL"},
+          {10, "X"}, {9, "IX"}, {5, "V"}, {4, "IV"},
+          {1, "I"}
       };
 
       std::string roman;
@@ -175,6 +183,8 @@ public:
   {
     PRISM::parseIonInputs(ions, this->nions_and_molecules, this->elems2passive, this->ions2passive, this->ion_counts, this->molecule_counts, include_H2);
     rtz_solver.set_photon_groups({13.6}, {500});
+    for (int i = 0; i < MAX_ELEMENTS; ++i)
+      ion_counts_total += nions_and_molecules[i];
   };
 
   void update( UserData &U,
@@ -257,8 +267,18 @@ public:
     const std::array<int, MAX_ELEMENTS> &elems2passive = this->elems2passive;
     const std::array<int, MAX_ELEMENTS> &ions2passive = this->ions2passive;
     const RTZ_type& rtz_solver = this->rtz_solver;
+    const int n_total_ions = this->ion_counts_total;
 
     timers.get("CoolingUpdate_PRISM").start();
+    // The PRISM chemistry kernel has very deep call stacks and large local
+    // arrays (~25+ KB per thread).  Increase the CUDA per-thread stack limit
+    // so that the kernel does not overflow the default 1 KB stack.
+#ifdef KOKKOS_ENABLE_CUDA
+    size_t prev_stack_size = 0;
+    cudaDeviceGetLimit(&prev_stack_size, cudaLimitStackSize);
+    if (prev_stack_size < 32768)
+      cudaDeviceSetLimit(cudaLimitStackSize, 32768);
+#endif
     // ------ Call PRISM cooling update on each cell ------
     foreach_cell.foreach_cell( "CoolingUpdate_PRISM", Uin.getShape(),
       KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell ) {
@@ -282,8 +302,8 @@ public:
           nelements_loc[i] = Uin_passive.at(iCell, index);
         }
 
-        // Get ionization fractions
-        std::array<double, MAX_ELEMENTS * MAX_ELEMENTS> xions_loc{};
+        // Get ionization fractions (MAX_TOTAL_IONS=113 vs old MAX_ELEMENTS*MAX_ELEMENTS=729)
+        double xions_loc[MAX_TOTAL_IONS] = {};
         {
           int iion = 0;
           for (auto i = 1; i < MAX_ELEMENTS; ++i) {
@@ -337,6 +357,7 @@ public:
           dt_s,
           nelements_loc,
           xions_loc,
+          n_total_ions,
           nCO,
           N_PHOT,
           F_PHOT,
