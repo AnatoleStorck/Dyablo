@@ -115,7 +115,7 @@ public:
         ForeachCell::SearchMode_neighbor search_neighbor_origin( cellmetadata.getLightOctree(), ForeachCell::SearchMode_neighbor::ORIGIN );
         CellIndex iCell_Uin = Uin.getShape().convert_index(iCell_Qpatch, search_neighbor_origin);
         int level_diff = iCell_Uin.level_diff();
-        ConsState u = {};
+        ConsState u{};
         if (iCell_Uin.is_boundary())
           u = policy.getBoundaryValue(Uin, iCell_Uin, cellmetadata);
         else if (level_diff < 0) {
