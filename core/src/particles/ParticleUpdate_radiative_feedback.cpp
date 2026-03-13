@@ -42,12 +42,12 @@ public:
 
     std::vector<UserData::FieldAccessor_FieldInfo>
       Uout_infos = {{"e_rad", IE_rad},    {"fx_rad", IFx_rad},    {"fy_rad", IFy_rad},    {"fz_rad", IFz_rad}};
-    std::vector<UserData_particles::ParticleAccessor_AttributeInfo>
-      pinfos = {{"mass", IMASS}, {"birth_time", IBIRTH}};
+    // std::vector<UserData_particles::ParticleAccessor_AttributeInfo>
+    //   pinfos = {{"mass", IMASS}, {"birth_time", IBIRTH}};
 
     // Get accessors
     auto Ppos = U.getParticleArray( "particles" );
-    auto Pdata = U.getParticleAccessor( "particles", pinfos );
+    // auto Pdata = U.getParticleAccessor( "particles", pinfos );
     auto Uout = U.getAccessor( Uout_infos );
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
@@ -60,12 +60,16 @@ public:
       (dt * Units::code_units().getUnit<Units::Time>()).convert_to(Units::s()),
       aexp
     );
+    const real_t code2cm3 = Units::supercomoving_to_physical<Units::Volume>(
+      (1 * Units::code_units().getUnit<Units::Volume>()).convert_to(Units::cm3()),
+      aexp
+    );
 
     foreach_particle.foreach_particle( "particles_update_feedback", Ppos,
       KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
     {
       // Age of the particle
-      real_t age_physical = t - Pdata.at(iPart, IBIRTH);
+      // real_t age_physical = t - Pdata.at(iPart, IBIRTH);
 
       pos_t part_pos = {Ppos.pos(iPart, IX), Ppos.pos(iPart, IY), Ppos.pos(iPart, IZ)};
 
@@ -74,13 +78,7 @@ public:
       pos_t cell_size = cells.getCellSize( iCell );
       real_t cell_volume = cell_size[IX] * cell_size[IY] * cell_size[IZ];
 
-      const real_t cell_volume_physical = Units::supercomoving_to_physical<Units::Volume>(
-        (cell_volume * Units::code_units().getUnit<Units::Volume>()).convert_to(Units::cm3()),
-        aexp
-      );
-
-      // Compute ejecta mass, thermal energy + kinetic energy
-      real_t Mstar = Pdata.at(iPart, IMASS);
+      const real_t cell_volume_physical = cell_volume * code2cm3;
 
       // Atomic are mandatory since multiple particles can explode in the same cell
       Kokkos::atomic_add(&Uout.at(iCell, IE_rad), photon_rate * dt_physical / cell_volume_physical);
