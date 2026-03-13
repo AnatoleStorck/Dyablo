@@ -267,17 +267,16 @@ public:
     const std::array<int, MAX_ELEMENTS> &elems2passive = this->elems2passive;
     const std::array<int, MAX_ELEMENTS> &ions2passive = this->ions2passive;
     const RTZ_type& rtz_solver = this->rtz_solver;
-    const int n_total_ions = this->ion_counts_total;
 
     timers.get("CoolingUpdate_PRISM").start();
-    // The PRISM chemistry kernel has very deep call stacks and large local
-    // arrays (~25+ KB per thread).  Increase the CUDA per-thread stack limit
-    // so that the kernel does not overflow the default 1 KB stack.
+    // The PRISM chemistry kernel uses ~4.5 KB of stack per thread (deep call
+    // chains + compact local arrays). The default CUDA stack (1 KB) is not
+    // enough, so we raise it to 8 KB (with headroom for future changes).
 #ifdef KOKKOS_ENABLE_CUDA
     size_t prev_stack_size = 0;
     cudaDeviceGetLimit(&prev_stack_size, cudaLimitStackSize);
-    if (prev_stack_size < 32768)
-      cudaDeviceSetLimit(cudaLimitStackSize, 32768);
+    if (prev_stack_size < 8192)
+      cudaDeviceSetLimit(cudaLimitStackSize, 8192);
 #endif
     // ------ Call PRISM cooling update on each cell ------
     foreach_cell.foreach_cell( "CoolingUpdate_PRISM", Uin.getShape(),
@@ -294,25 +293,19 @@ public:
         // Compute T/µ
         real_t T_over_mu = (P_physical / rho_physical * mp_over_kb).convert_to(K);
 
-        // Get element number densities
-        std::array<double, MAX_ELEMENTS> nelements_loc{};
-        for (auto i = 1; i < MAX_ELEMENTS; ++i) {
-          if (ions2passive[i] == -1) continue; // Skip elements not in network
-          int index = elems2passive[i];
-          nelements_loc[i] = Uin_passive.at(iCell, index);
-        }
+        // Build CompactIonData directly from field data (avoids intermediate xions_loc array)
+        CompactIonData n_and_ion_fracs_loc{};
+        const Element* elements = rtz_solver.elements_d.data();
+        n_and_ion_fracs_loc.init_offsets(elements);
 
-        // Get ionization fractions (MAX_TOTAL_IONS=113 vs old MAX_ELEMENTS*MAX_ELEMENTS=729)
-        double xions_loc[MAX_TOTAL_IONS] = {};
-        {
-          int iion = 0;
-          for (auto i = 1; i < MAX_ELEMENTS; ++i) {
-            if (ions2passive[i] == -1) continue; // Skip elements not in network
-            for (auto j = 0; j < nions_and_molecules[i]; ++j) {
-              int index = ions2passive[i] + j;
-              xions_loc[iion] = Uin_passive.at(iCell, index);
-              iion++;
-            }
+        for (int i = 1; i < MAX_ELEMENTS; ++i) {
+          if (ions2passive[i] == -1) continue; // Skip elements not in network
+          // Set element number density
+          n_and_ion_fracs_loc.n_element[i] = Uin_passive.at(iCell, elems2passive[i]);
+          // Set ion fractions
+          for (int j = 0; j < nions_and_molecules[i]; ++j) {
+            int index = ions2passive[i] + j;
+            n_and_ion_fracs_loc[i].ion_fracs[j] = Uin_passive.at(iCell, index);
           }
         }
 
@@ -347,17 +340,12 @@ public:
 
         T_over_mu = 1e4;
 
-        double T_over_mu_old = T_over_mu;
-        double N_PHOT_old = N_PHOT[0];
-        // printf("T0 = %g nH = %g nHe = %g xHI=%g xHII=%g xH2=%g, xHeI=%g xHeII=%g xHeIII=%g\n", T_over_mu, nelements_loc[1], nelements_loc[2], xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4], xions_loc[5]);
         rtz_solver.solve_chemistry_and_cooling(
           T_over_mu,
           metallicity,
           aexp,
           dt_s,
-          nelements_loc,
-          xions_loc,
-          n_total_ions,
+          n_and_ion_fracs_loc,
           nCO,
           N_PHOT,
           F_PHOT,
@@ -368,25 +356,13 @@ public:
           flags
         );
 
-        // printf("\nConverged to T_over_mu(old) = %g, (new) = %g xHI=%g xHII=%g xHeI=%g xHeII=%g xHeIII=%g N_phot(old) = %g, (new) = %g\n", T_over_mu_old, out_T_over_mu, xions_loc[0], xions_loc[1], xions_loc[2], xions_loc[3], xions_loc[4], N_PHOT_old, N_PHOT[0]);
-
-        // Set element number densities
-        for (auto i = 1; i < MAX_ELEMENTS; ++i) {
+        // Write back element number densities and ion fractions
+        for (int i = 1; i < MAX_ELEMENTS; ++i) {
           if (ions2passive[i] == -1) continue; // Skip elements not in network
-          int index = elems2passive[i];
-          Uout_passive.at(iCell, index) = nelements_loc[i];
-        }
-
-        // Get ionization fractions
-        {
-          int iion = 0;
-          for (auto i = 1; i < MAX_ELEMENTS; ++i) {
-            if (ions2passive[i] == -1) continue; // Skip elements not in network
-            for (auto j = 0; j < nions_and_molecules[i]; ++j) {
-              int index = ions2passive[i] + j;
-              Uout_passive.at(iCell, index) = xions_loc[iion];
-              iion++;
-            }
+          Uout_passive.at(iCell, elems2passive[i]) = n_and_ion_fracs_loc.n_element[i];
+          for (int j = 0; j < nions_and_molecules[i]; ++j) {
+            int index = ions2passive[i] + j;
+            Uout_passive.at(iCell, index) = n_and_ion_fracs_loc[i].ion_fracs[j];
           }
         }
 
