@@ -38,6 +38,7 @@ namespace PRISM {
       std::array<int, MAX_ELEMENTS>& nions_and_molecules,
       std::array<int, MAX_ELEMENTS>& elems2passive,
       std::array<int, MAX_ELEMENTS>& ions2passive,
+      std::map<std::string, int>& elem2atomicnum,
       std::map<std::string, int>& ion_counts,
       std::map<std::string, int>& molecule_counts,
       bool include_H2
@@ -88,19 +89,17 @@ namespace PRISM {
       int iions = ion_counts.size(), ielems = 0;
       auto check_set = [&](
           const std::string& elem_name,
-          std::array<int, MAX_ELEMENTS>& nions_and_molecules,
-          std::array<int, MAX_ELEMENTS>& elems2passive,
-          std::array<int, MAX_ELEMENTS>& ions2passive,
-          const int index
+          const int atomic_number
       ) {
           if (ion_counts.find(elem_name) == ion_counts.end()) return;
 
           int nions_this_element = ion_counts.at(elem_name);
           int nmolecules_this_element = molecule_counts.find(elem_name) != molecule_counts.end() ? molecule_counts.at(elem_name) : 0;
 
-          nions_and_molecules[index] = nions_this_element + nmolecules_this_element;
-          ions2passive[index] = iions;
-          elems2passive[index] = ielems;
+          nions_and_molecules[atomic_number] = nions_this_element + nmolecules_this_element;
+          ions2passive[atomic_number] = iions;
+          elems2passive[atomic_number] = ielems;
+          elem2atomicnum[elem_name] = atomic_number;
           iions += nions_this_element + nmolecules_this_element;
           ielems++;
       };
@@ -110,16 +109,16 @@ namespace PRISM {
           ions2passive[i] = -1;
       }
 
-      check_set( "H", nions_and_molecules, elems2passive, ions2passive,  1);
-      check_set("He", nions_and_molecules, elems2passive, ions2passive,  2);
-      check_set( "C", nions_and_molecules, elems2passive, ions2passive,  6);
-      check_set( "N", nions_and_molecules, elems2passive, ions2passive,  7);
-      check_set( "O", nions_and_molecules, elems2passive, ions2passive,  8);
-      check_set("Ne", nions_and_molecules, elems2passive, ions2passive, 10);
-      check_set("Mg", nions_and_molecules, elems2passive, ions2passive, 12);
-      check_set("Si", nions_and_molecules, elems2passive, ions2passive, 14);
-      check_set( "S", nions_and_molecules, elems2passive, ions2passive, 16);
-      check_set("Fe", nions_and_molecules, elems2passive, ions2passive, 26);
+      check_set( "H",  1);
+      check_set("He",  2);
+      check_set( "C",  6);
+      check_set( "N",  7);
+      check_set( "O",  8);
+      check_set("Ne", 10);
+      check_set("Mg", 12);
+      check_set("Si", 14);
+      check_set( "S", 16);
+      check_set("Fe", 26);
   }
 }
 
@@ -156,6 +155,7 @@ private:
   std::array<int, MAX_ELEMENTS> nions_and_molecules{};
   std::array<int, MAX_ELEMENTS> elems2passive{};
   std::array<int, MAX_ELEMENTS> ions2passive{};
+  std::map<std::string, int> elem2atomicnum{};
   int ion_counts_total = 0;
 
   real_t T_blackbody;
@@ -181,7 +181,7 @@ public:
         T_blackbody( configMap.getValue<real_t>("cooling", "T_blackbody", 4e4) ),
         rtz_solver(data_path)
   {
-    PRISM::parseIonInputs(ions, this->nions_and_molecules, this->elems2passive, this->ions2passive, this->ion_counts, this->molecule_counts, include_H2);
+    PRISM::parseIonInputs(ions, this->nions_and_molecules, this->elems2passive, this->ions2passive, this->elem2atomicnum, this->ion_counts, this->molecule_counts, include_H2);
     rtz_solver.set_photon_groups({13.6}, {500});
     for (int i = 0; i < MAX_ELEMENTS; ++i)
       ion_counts_total += nions_and_molecules[i];
@@ -207,34 +207,32 @@ public:
     std::vector<UserData::FieldAccessor::FieldInfo> passive_in;
     std::vector<UserData::FieldAccessor::FieldInfo> passive_out;
     {
-      int ipassive = 0;
       // Add in element abundances
       for (const auto& [elem, _val]: ion_counts) {
+        int atomic_num = elem2atomicnum[elem];
         std::ostringstream oss;
         oss << "n" << elem;
-        passive_in.push_back({oss.str(), ipassive});
+        passive_in.push_back({oss.str(), elems2passive[atomic_num]});
         // oss << "_next";
-        passive_out.push_back({oss.str(), ipassive});
-        ipassive++;
+        passive_out.push_back({oss.str(), elems2passive[atomic_num]});
       }
       // Add in xions
       for (const auto& [elem, _val]: ion_counts) {
+        int atomic_num = elem2atomicnum[elem];
         for (int iion = 0; iion < ion_counts[elem]; iion++) {
           std::ostringstream oss;
           // Convert iion to roman numeral
           std::string iion_roman = PRISM::int2roman(iion+1);
           oss << "x" << elem << "_" << iion_roman;
-          passive_in.push_back({oss.str(), ipassive});
+          passive_in.push_back({oss.str(), ions2passive[atomic_num] + iion});
           // oss << "_next";
-          passive_out.push_back({oss.str(), ipassive});
-          ipassive++;
+          passive_out.push_back({oss.str(), ions2passive[atomic_num] + iion});
         }
         if (elem == "H" && include_H2) {
           // Add H2
           std::string field_name = "xH2";
-          passive_in.push_back({field_name.c_str(), ipassive});
-          passive_out.push_back({field_name.c_str(), ipassive});
-          ipassive++;
+          passive_in.push_back({field_name.c_str(), ions2passive[atomic_num] + 2});
+          passive_out.push_back({field_name.c_str(), ions2passive[atomic_num] + 2});
         }
       }
 
