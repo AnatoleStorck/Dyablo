@@ -269,18 +269,27 @@ public:
     const RTZ_type& rtz_solver = this->rtz_solver;
 
     timers.get("CoolingUpdate_PRISM").start();
-    // The PRISM chemistry kernel uses ~4.5 KB of stack per thread (deep call
-    // chains + compact local arrays). The default CUDA stack (1 KB) is not
-    // enough, so we raise it to 8 KB (with headroom for future changes).
-#ifdef KOKKOS_ENABLE_CUDA
-    size_t prev_stack_size = 0;
-    cudaDeviceGetLimit(&prev_stack_size, cudaLimitStackSize);
-    if (prev_stack_size < 8192)
-      cudaDeviceSetLimit(cudaLimitStackSize, 8192);
-#endif
+
+    // Allocate CompactIonData in device memory to avoid 2352 B/thread stack
+    // usage that exceeds CUDA's default 1 KB stack. Use UniqueToken to size
+    // the allocation to min(hardware concurrency, total cells) — each
+    // concurrent thread gets a unique slot via acquire/release.
+    auto cell_shape = Uin.getShape();
+    uint32_t nbCellsPerBlock = cell_shape.bx * cell_shape.by * cell_shape.bz;
+    uint32_t total_cells = cell_shape.nbOcts * nbCellsPerBlock;
+    using exec_space = Kokkos::DefaultExecutionSpace;
+    Kokkos::Experimental::UniqueToken<exec_space> token(total_cells);
+    Kokkos::View<CompactIonData*> compact_data("PRISM_compact_data", token.size());
+
     // ------ Call PRISM cooling update on each cell ------
-    foreach_cell.foreach_cell( "CoolingUpdate_PRISM", Uin.getShape(),
-      KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell ) {
+    foreach_cell.foreach_patch( "CoolingUpdate_PRISM",
+      PATCH_LAMBDA( const ForeachCell::Patch& patch ) {
+      patch.foreach_cell( cell_shape,
+        CELL_LAMBDA( const ForeachCell::CellIndex& iCell ) {
+        // Acquire a unique slot for this thread's CompactIonData
+        Kokkos::Experimental::AcquireUniqueToken<exec_space> slot(token);
+        CompactIonData& n_and_ion_fracs_loc = compact_data(slot.value());
+
         // Get local hydro quantities
         ConsState u = policy.getConsState(Uin, iCell);
         PrimState q = policy.consToPrim(u);
@@ -293,9 +302,9 @@ public:
         // Compute T/µ
         real_t T_over_mu = (P_physical / rho_physical * mp_over_kb).convert_to(K);
 
-        // Build CompactIonData directly from field data (avoids intermediate xions_loc array)
-        CompactIonData n_and_ion_fracs_loc{};
+        // Initialize CompactIonData from field data
         const Element* elements = rtz_solver.elements_d.data();
+        n_and_ion_fracs_loc = CompactIonData{};
         n_and_ion_fracs_loc.init_offsets(elements);
 
         for (int i = 1; i < MAX_ELEMENTS; ++i) {
@@ -379,8 +388,8 @@ public:
         
         u = policy.primToCons(q);
         policy.setConsState(Uin, iCell, u);
-      }
-    );
+      }); // end patch.foreach_cell
+    }); // end foreach_patch
 
     timers.get("CoolingUpdate_PRISM").stop();
   }
