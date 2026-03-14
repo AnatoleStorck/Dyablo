@@ -3,10 +3,6 @@
 #include "hyperbolic/policy/HyperbolicPolicy_Hydro.h"
 #include "utils/units/Units.h"
 
-#ifdef KOKKOS_ENABLE_CUDA
-#include <cuda_runtime.h>
-#endif
-
 #include "gizmo_rtz/dyablo_api.hpp"
 // Include the implementation so that CUDA device functions (KOKKOS_FUNCTION)
 // are visible within this translation unit, avoiding the need for
@@ -268,21 +264,22 @@ public:
 
     timers.get("CoolingUpdate_PRISM").start();
 
-    // Allocate CompactIonData in device memory to avoid 2352 B/thread stack
-    // usage that exceeds CUDA's default 1 KB stack. Use UniqueToken to size
-    // the allocation to min(hardware concurrency, total cells) — each
-    // concurrent thread gets a unique slot via acquire/release.
-    auto cell_shape = Uin.getShape();
-    uint32_t nbCellsPerBlock = cell_shape.bx * cell_shape.by * cell_shape.bz;
-    uint32_t total_cells = cell_shape.nbOcts * nbCellsPerBlock;
+    // Important note here:
+    // GPUs have a limited amount of shared memory (typically on the order of
+    // 1kB per thread). CompactIonData takes 2352 bytes, so we cannot store one
+    // per thread on the stack. Instead, we use a shared pool of CompactIonData
+    // objects, and each thread acquires one when needed. The UniqueToken
+    // mechanism, by default, has a .size() equal to the hardware concurrency
+    // (the number of simultaneous active threads), and allows generating unique
+    // indices in the range [0, .size()) that can be used to index into shared
+    // memory without conflicts.
     using exec_space = Kokkos::DefaultExecutionSpace;
-    Kokkos::Experimental::UniqueToken<exec_space> token(total_cells);
+    Kokkos::Experimental::UniqueToken<exec_space> token;
     Kokkos::View<CompactIonData*> compact_data("PRISM_compact_data", token.size());
 
     // ------ Call PRISM cooling update on each cell ------
     foreach_cell.foreach_cell( "CoolingUpdate_PRISM", Uin.getShape(),
       KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell ) {
-        // Acquire a unique slot for this thread's CompactIonData
         Kokkos::Experimental::AcquireUniqueToken<exec_space> slot(token);
         CompactIonData& n_and_ion_fracs_loc = compact_data(slot.value());
 
@@ -381,7 +378,7 @@ public:
 
         // Recompute conservative variables
         q.p = (out_T_over_mu * Units::Kelvin() * rho_physical / mp_over_kb).convert_to(code_pressure);
-        
+
         u = policy.primToCons(q);
         policy.setConsState(Uin, iCell, u);
       }
