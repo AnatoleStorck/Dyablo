@@ -126,7 +126,7 @@ constexpr bool rt_advect = true;
 constexpr bool include_self_shielding = false;
 
 using RTZ_type = RTZ<constant_temperature,include_H2,include_CO,rt_advect,include_self_shielding>;
-/** 
+/**
  * @brief PRISM cooling module (https://arxiv.org/abs/2211.04626)
  */
 template< typename Policy >
@@ -135,7 +135,7 @@ class CoolingUpdate_PRISM : public SourceUpdate
 private:
   ForeachCell& foreach_cell;
   Timers& timers;
-  
+
   typename Policy::Params policy_params;
 
   real_t smallr;
@@ -143,7 +143,7 @@ private:
   real_t smallp;
   bool cosmo_run;
   std::string data_path;
-  
+
   // Information about network
   std::vector<std::string> ions;
   std::map<std::string, int> ion_counts;
@@ -161,7 +161,7 @@ private:
 public:
   using PrimState = typename Policy::PrimState;
   using ConsState = typename Policy::ConsState;
-  
+
   CoolingUpdate_PRISM(
         ConfigMap& configMap,
         ForeachCell& foreach_cell,
@@ -181,6 +181,11 @@ public:
     rtz_solver.set_photon_groups({13.6}, {500});
     for (int i = 0; i < MAX_ELEMENTS; ++i)
       ion_counts_total += nions_and_molecules[i];
+
+    timers.get("CoolingUpdate_PRISM:cross_section").start();
+    rtz_solver.need_to_update_cross_sections(T_blackbody);
+    timers.get("CoolingUpdate_PRISM:cross_section").stop();
+
   };
 
   void update( UserData &U,
@@ -194,7 +199,6 @@ public:
 
     // Update UV background if needed
     rtz_solver.need_to_update_UVB(redshift);
-    rtz_solver.need_to_update_cross_sections(T_blackbody);
 
     // Hydro state accessors
     dyablo::UserData::FieldAccessor Uin = policy.getUout(U);
