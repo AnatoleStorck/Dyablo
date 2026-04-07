@@ -2,6 +2,7 @@
 #include "utils/units/Units.h"
 #include "ForeachParticle.h"
 #include "states/State_hydro.h"
+#include "types.hpp"
 
 #include <Kokkos_Core.hpp>
 
@@ -32,7 +33,7 @@ public:
     const real_t dt = scalar_data.get<real_t>("dt");
 
     enum VarIndex_rt {
-      IE_rad, IFx_rad, IFy_rad, IFz_rad
+      IE_rad
     };
     enum VarIndex_particle {
       IMASS, IBIRTH,
@@ -40,8 +41,11 @@ public:
 
     timers.get("ParticleUpdate_radiative_feedback").start();
 
-    std::vector<UserData::FieldAccessor_FieldInfo>
-      Uout_infos = {{"e_rad", IE_rad},    {"fx_rad", IFx_rad},    {"fy_rad", IFy_rad},    {"fz_rad", IFz_rad}};
+    std::vector<UserData_fields::FieldAccessor_FieldInfo> Uout_infos;
+    Uout_infos.reserve(N_GROUPS);
+    for (int g = 0; g < N_GROUPS; ++g) {
+      Uout_infos.push_back({"e_rad_" + std::to_string(g), g});
+    }
     // std::vector<UserData_particles::ParticleAccessor_AttributeInfo>
     //   pinfos = {{"mass", IMASS}, {"birth_time", IBIRTH}};
 
@@ -56,6 +60,7 @@ public:
 
     // Gather SN feedback parameters
     const real_t photon_rate = this->photon_rate;
+    const real_t photon_rate_group = photon_rate / N_GROUPS;
     const real_t dt_physical = Units::supercomoving_to_physical<Units::Time>(
       (dt * Units::code_units().getUnit<Units::Time>()).convert_to(Units::s()),
       aexp
@@ -81,7 +86,9 @@ public:
       const real_t cell_volume_physical = cell_volume * code2cm3;
 
       // Atomic are mandatory since multiple particles can explode in the same cell
-      Kokkos::atomic_add(&Uout.at(iCell, IE_rad), photon_rate * dt_physical / cell_volume_physical);
+      for (int g = 0; g < N_GROUPS; ++g) {
+        Kokkos::atomic_add(&Uout.at(iCell, g), photon_rate_group * dt_physical / cell_volume_physical);
+      }
 
     });
 

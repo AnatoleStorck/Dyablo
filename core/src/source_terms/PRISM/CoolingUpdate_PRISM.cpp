@@ -116,6 +116,22 @@ namespace PRISM {
       check_set( "S", 16);
       check_set("Fe", 26);
   }
+
+  inline void parsePhotonGroupInputs(
+      const std::vector<std::string>& rt_groups_lower,
+      const std::vector<std::string>& rt_groups_upper,
+      std::array<double, N_GROUPS>& E_min,
+      std::array<double, N_GROUPS>& E_max
+  ) {
+      DYABLO_ASSERT_HOST_RELEASE(rt_groups_lower.size() == N_GROUPS, "rt_groups_lower size must be equal to N_GROUPS");
+      DYABLO_ASSERT_HOST_RELEASE(rt_groups_upper.size() == N_GROUPS, "rt_groups_upper size must be equal to N_GROUPS");
+
+      for (size_t i = 0; i < N_GROUPS; i++) {
+          E_min[i] = std::stod(rt_groups_lower[i]);
+          E_max[i] = std::stod(rt_groups_upper[i]);
+          DYABLO_ASSERT_HOST_RELEASE(E_min[i] < E_max[i], "For photon group " << i << ", E_min must be less than E_max");
+      }
+  }
 }
 
 namespace dyablo {
@@ -154,6 +170,13 @@ private:
   std::map<std::string, int> elem2atomicnum{};
   int ion_counts_total = 0;
 
+  // RT groups
+  std::vector<std::string> rt_groups_lower;
+  std::vector<std::string> rt_groups_upper;
+
+  std::array<double, N_GROUPS> E_min{};
+  std::array<double, N_GROUPS> E_max{};
+
   real_t T_blackbody;
 
   RTZ_type rtz_solver;
@@ -167,18 +190,23 @@ public:
         ForeachCell& foreach_cell,
         Timers& timers
   ) :
-        foreach_cell(foreach_cell),
-        timers(timers),
-        policy_params(Policy::getParams(configMap)),
-        cosmo_run(configMap.getValue<bool>("cosmology", "active", false)),
-        data_path(configMap.getValue<std::string>("cooling", "data_path")),
+        foreach_cell    ( foreach_cell),
+        timers          ( timers),
+        policy_params   ( Policy::getParams(configMap)),
+        cosmo_run       ( configMap.getValue<bool>("cosmology", "active", false)),
+        data_path       ( configMap.getValue<std::string>("cooling", "data_path")),
         // HM12_UVB_data(PRISM::load_UVB_data(UVB_table_path)),
-        ions( configMap.getValue<std::vector<std::string>>("cooling", "ions" ) ),
-        T_blackbody( configMap.getValue<real_t>("cooling", "T_blackbody", 4e4) ),
+        ions            ( configMap.getValue<std::vector<std::string>>("cooling", "ions" ) ),
+        T_blackbody     ( configMap.getValue<real_t>("cooling", "T_blackbody", 1e4) ),
+        rt_groups_lower ( configMap.getValue<std::vector<std::string>>("rad", "photon_groups_lower",
+                          {"0.1", "1.", "5.6", "11.2", "13.6", "15.2", "24.59", "54.42"}) ),
+        rt_groups_upper ( configMap.getValue<std::vector<std::string>>("rad", "photon_groups_upper",
+                          {"1.", "5.6", "11.2", "13.6", "15.2", "24.59", "54.42", "500.0"}) ),
         rtz_solver(data_path)
   {
     PRISM::parseIonInputs(ions, this->nions_and_molecules, this->elems2passive, this->ions2passive, this->elem2atomicnum, this->ion_counts, this->molecule_counts, include_H2);
-    rtz_solver.set_photon_groups({13.6}, {500});
+    PRISM::parsePhotonGroupInputs(rt_groups_lower, rt_groups_upper, this->E_min, this->E_max);
+    rtz_solver.set_photon_groups(this->E_min, this->E_max);
     for (int i = 0; i < MAX_ELEMENTS; ++i)
       ion_counts_total += nions_and_molecules[i];
 
@@ -243,11 +271,29 @@ public:
 
 
     // RT accessors    std::vector<UserData::FieldAccessor::FieldInfo> rt_in;
-    DYABLO_ASSERT_HOST_RELEASE(N_GROUPS == 1, "Only N_GROUPS=1 is currently supported");
     DYABLO_ASSERT_HOST_RELEASE(foreach_cell.getDim() == 3, "Only 3D is currently supported");
 
-    UserData::FieldAccessor Uin_rt = U.getAccessor( {{"e_rad_next", 0}, {"fx_rad_next", 1}, {"fy_rad_next", 2}, {"fz_rad_next", 3}} );
-    UserData::FieldAccessor Uout_rt = U.getAccessor( {{"e_rad_next", 0}, {"fx_rad_next", 1}, {"fy_rad_next", 2}, {"fz_rad_next", 3}} );
+
+    // Create accessors for all photon group fields (e_rad_<g>_next, fx_rad_<g>_next, ...)
+    const auto rt_field_name = [](const char* base, int g, bool next) {
+      std::string name(base);
+      name += "_" + std::to_string(g);
+      if (next) name += "_next";
+      return name;
+    };
+
+    std::vector<UserData::FieldAccessor::FieldInfo> rt_fields;
+    rt_fields.reserve(4 * N_GROUPS);
+
+    for (int g = 0; g < N_GROUPS; ++g) {
+      const int off = 4 * g;
+      rt_fields.push_back({rt_field_name("e_rad",  g, true), off + 0});
+      rt_fields.push_back({rt_field_name("fx_rad", g, true), off + 1});
+      rt_fields.push_back({rt_field_name("fy_rad", g, true), off + 2});
+      rt_fields.push_back({rt_field_name("fz_rad", g, true), off + 3});
+    }
+    UserData::FieldAccessor Uin_rt = U.getAccessor(rt_fields);
+    UserData::FieldAccessor Uout_rt = U.getAccessor(rt_fields);
 
     // Create units
     real_t XH = Units::XH().convert_to(Units::one());
