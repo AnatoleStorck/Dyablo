@@ -305,7 +305,7 @@ public:
     }
 
     this->m_scalar_data.set("iter", m_iter_start);
-    this->m_scalar_data.set<int>("n_groups", configMap.getValue<int>("rt", "n_groups", 4));
+    this->m_scalar_data.set<int>("n_groups", configMap.getValue<int>("rad", "n_groups", 4));
     {
       real_t t0 = configMap.getValue<real_t>("run", "tStart", t0_default);
       this->m_scalar_data.set("time", t0);
