@@ -19,17 +19,18 @@ public:
   : foreach_cell    ( foreach_cell ),
     foreach_particle( foreach_cell.get_amr_mesh(), configMap ),
     timers          ( timers ),
+    // n_groups        ( configMap.getValue<int>("rt", "n_groups", 4) ),
     photon_rate     ( configMap.getValue<real_t>("star_feedback", "photon_rate", 1e49) ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) )
   {
+    n_groups = configMap.getValue<int>("rt", "n_groups", 4);
   }
 
   ~ParticleUpdate_radiative_feedback() {}
 
   void update(UserData& U, ScalarSimulationData& scalar_data)
   {
-
-    const real_t t = cosmology ? scalar_data.get<real_t>("time_physical") : scalar_data.get<real_t>("time");
+  // const real_t t = cosmology ? scalar_data.get<real_t>("time_physical") : scalar_data.get<real_t>("time");
     const real_t dt = scalar_data.get<real_t>("dt");
 
     enum VarIndex_rt {
@@ -42,8 +43,7 @@ public:
     timers.get("ParticleUpdate_radiative_feedback").start();
 
     std::vector<UserData_fields::FieldAccessor_FieldInfo> Uout_infos;
-    Uout_infos.reserve(N_GROUPS);
-    for (int g = 0; g < N_GROUPS; ++g) {
+    for (int g = 0; g < n_groups; ++g) {
       Uout_infos.push_back({"e_rad_" + std::to_string(g), g});
     }
     // std::vector<UserData_particles::ParticleAccessor_AttributeInfo>
@@ -60,7 +60,7 @@ public:
 
     // Gather SN feedback parameters
     const real_t photon_rate = this->photon_rate;
-    const real_t photon_rate_group = photon_rate / N_GROUPS;
+    const real_t photon_rate_group = photon_rate / n_groups;
     const real_t dt_physical = Units::supercomoving_to_physical<Units::Time>(
       (dt * Units::code_units().getUnit<Units::Time>()).convert_to(Units::s()),
       aexp
@@ -86,7 +86,7 @@ public:
       const real_t cell_volume_physical = cell_volume * code2cm3;
 
       // Atomic are mandatory since multiple particles can explode in the same cell
-      for (int g = 0; g < N_GROUPS; ++g) {
+      for (int g = 0; g < n_groups; ++g) {
         Kokkos::atomic_add(&Uout.at(iCell, g), photon_rate_group * dt_physical / cell_volume_physical);
       }
 
@@ -101,6 +101,7 @@ private:
   Timers& timers;
 
   real_t photon_rate;
+  int n_groups;
 
   bool cosmology;
 };

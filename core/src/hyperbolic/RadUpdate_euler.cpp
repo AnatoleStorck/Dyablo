@@ -15,8 +15,9 @@ public:
   {
     const bool had_prev_group = scalar_data.hasValue<int>("rad_group_id");
     const int prev_group = had_prev_group ? scalar_data.get<int>("rad_group_id") : -1;
+    const int n_groups = scalar_data.hasValue<int>("n_groups") ? scalar_data.get<int>("n_groups") : 1;
 
-    for (int g = 0; g < N_GROUPS; ++g)
+    for (int g = 0; g < n_groups; ++g)
     {
       scalar_data.set<int>("rad_group_id", g);
       Hyperbolic_euler::update(U, scalar_data);

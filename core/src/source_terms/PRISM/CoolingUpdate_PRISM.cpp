@@ -118,17 +118,22 @@ namespace PRISM {
   }
 
   inline void parsePhotonGroupInputs(
-      const std::vector<std::string>& rt_groups_lower,
-      const std::vector<std::string>& rt_groups_upper,
-      std::array<double, N_GROUPS>& E_min,
-      std::array<double, N_GROUPS>& E_max
+      int n_groups,
+      const std::vector<real_t>& rt_groups_lower,
+      const std::vector<real_t>& rt_groups_upper,
+      std::vector<double>& E_min,
+      std::vector<double>& E_max
   ) {
-      DYABLO_ASSERT_HOST_RELEASE(rt_groups_lower.size() == N_GROUPS, "rt_groups_lower size must be equal to N_GROUPS");
-      DYABLO_ASSERT_HOST_RELEASE(rt_groups_upper.size() == N_GROUPS, "rt_groups_upper size must be equal to N_GROUPS");
+      DYABLO_ASSERT_HOST_RELEASE(n_groups > 0, "n_groups must be > 0");
+      DYABLO_ASSERT_HOST_RELEASE(rt_groups_lower.size() == static_cast<size_t>(n_groups), "rt_groups_lower size must be equal to n_groups");
+      DYABLO_ASSERT_HOST_RELEASE(rt_groups_upper.size() == static_cast<size_t>(n_groups), "rt_groups_upper size must be equal to n_groups");
 
-      for (size_t i = 0; i < N_GROUPS; i++) {
-          E_min[i] = std::stod(rt_groups_lower[i]);
-          E_max[i] = std::stod(rt_groups_upper[i]);
+      E_min.assign(n_groups, 0.0);
+      E_max.assign(n_groups, 0.0);
+
+      for (int i = 0; i < n_groups; i++) {
+        E_min[i] = rt_groups_lower[i];
+        E_max[i] = rt_groups_upper[i];
           DYABLO_ASSERT_HOST_RELEASE(E_min[i] < E_max[i], "For photon group " << i << ", E_min must be less than E_max");
       }
   }
@@ -171,11 +176,12 @@ private:
   int ion_counts_total = 0;
 
   // RT groups
-  std::vector<std::string> rt_groups_lower;
-  std::vector<std::string> rt_groups_upper;
+  int n_groups;
+  std::vector<real_t> rt_groups_lower;
+  std::vector<real_t> rt_groups_upper;
 
-  std::array<double, N_GROUPS> E_min{};
-  std::array<double, N_GROUPS> E_max{};
+  std::vector<double> E_min;
+  std::vector<double> E_max;
 
   real_t T_blackbody;
 
@@ -198,14 +204,19 @@ public:
         // HM12_UVB_data(PRISM::load_UVB_data(UVB_table_path)),
         ions            ( configMap.getValue<std::vector<std::string>>("cooling", "ions" ) ),
         T_blackbody     ( configMap.getValue<real_t>("cooling", "T_blackbody", 1e4) ),
-        rt_groups_lower ( configMap.getValue<std::vector<std::string>>("rad", "photon_groups_lower",
-                          {"0.1", "1.", "5.6", "11.2", "13.6", "15.2", "24.59", "54.42"}) ),
-        rt_groups_upper ( configMap.getValue<std::vector<std::string>>("rad", "photon_groups_upper",
-                          {"1.", "5.6", "11.2", "13.6", "15.2", "24.59", "54.42", "500.0"}) ),
+        n_groups        ( configMap.getValue<int>("rt", "n_groups", 4) ),
+        rt_groups_lower ( configMap.getValue<std::vector<real_t>>("rad", "photon_groups_lower",
+                          {13.6, 15.2, 24.59, 54.42}) ),
+        rt_groups_upper ( configMap.getValue<std::vector<real_t>>("rad", "photon_groups_upper",
+                          {15.2, 24.59, 54.42, 500.0}) ),
         rtz_solver(data_path)
   {
-    PRISM::parseIonInputs(ions, this->nions_and_molecules, this->elems2passive, this->ions2passive, this->elem2atomicnum, this->ion_counts, this->molecule_counts, include_H2);
-    PRISM::parsePhotonGroupInputs(rt_groups_lower, rt_groups_upper, this->E_min, this->E_max);
+    PRISM::parseIonInputs(
+      ions,
+      this->nions_and_molecules, this->elems2passive, this->ions2passive, this->elem2atomicnum, this->ion_counts, this->molecule_counts,
+      include_H2
+    );
+    PRISM::parsePhotonGroupInputs(n_groups, rt_groups_lower, rt_groups_upper, this->E_min, this->E_max);
     rtz_solver.set_photon_groups(this->E_min, this->E_max);
     for (int i = 0; i < MAX_ELEMENTS; ++i)
       ion_counts_total += nions_and_molecules[i];
@@ -213,7 +224,6 @@ public:
     timers.get("CoolingUpdate_PRISM:cross_section").start();
     rtz_solver.need_to_update_cross_sections(T_blackbody);
     timers.get("CoolingUpdate_PRISM:cross_section").stop();
-
   };
 
   void update( UserData &U,
@@ -283,9 +293,9 @@ public:
     };
 
     std::vector<UserData::FieldAccessor::FieldInfo> rt_fields;
-    rt_fields.reserve(4 * N_GROUPS);
+    rt_fields.reserve(4 * n_groups);
 
-    for (int g = 0; g < N_GROUPS; ++g) {
+    for (int g = 0; g < n_groups; ++g) {
       const int off = 4 * g;
       rt_fields.push_back({rt_field_name("e_rad",  g, true), off + 0});
       rt_fields.push_back({rt_field_name("fx_rad", g, true), off + 1});
@@ -296,9 +306,9 @@ public:
     UserData::FieldAccessor Uout_rt = U.getAccessor(rt_fields);
 
     // Create units
-    real_t XH = Units::XH().convert_to(Units::one());
+    // real_t XH = Units::XH().convert_to(Units::one());
 
-    auto mp_per_cc     = Units::PROTON_MASS() / Units::cm3();
+    // auto mp_per_cc     = Units::PROTON_MASS() / Units::cm3();
     auto mp_over_kb    = Units::PROTON_MASS() / Units::KBOLTZ();
     auto K = Units::Kelvin();
     auto code_density  = Units::code_units().getUnit<Units::Density>();
@@ -310,6 +320,7 @@ public:
     const std::array<int, MAX_ELEMENTS> &nions_and_molecules = this->nions_and_molecules;
     const std::array<int, MAX_ELEMENTS> &elems2passive = this->elems2passive;
     const std::array<int, MAX_ELEMENTS> &ions2passive = this->ions2passive;
+    const int n_groups = this->n_groups;
     const RTZ_type& rtz_solver = this->rtz_solver;
 
     timers.get("CoolingUpdate_PRISM").start();
@@ -326,6 +337,10 @@ public:
     using exec_space = Kokkos::DefaultExecutionSpace;
     Kokkos::Experimental::UniqueToken<exec_space> token;
     Kokkos::View<CompactIonData*> compact_data("PRISM_compact_data", token.size());
+    Kokkos::View<double**> phot_pool("PRISM_phot_pool", token.size(), n_groups);
+    Kokkos::View<double***> flux_pool("PRISM_flux_pool", token.size(), n_groups, N_DIM);
+    Kokkos::View<double**> phot_tmp_pool("PRISM_phot_tmp_pool", token.size(), n_groups);
+    Kokkos::View<double***> flux_tmp_pool("PRISM_flux_tmp_pool", token.size(), n_groups, N_DIM);
 
     // ------ Call PRISM cooling update on each cell ------
     foreach_cell.foreach_cell( "CoolingUpdate_PRISM", Uin.getShape(),
@@ -340,7 +355,7 @@ public:
         // Initial state
         auto rho_physical = Units::supercomoving_to_physical<Units::Density>(q.rho, aexp) * code_density;
         auto P_physical = Units::supercomoving_to_physical<Units::Pressure>(q.p, aexp) * code_pressure;
-        real_t rho = rho_physical.convert_to(mp_per_cc);
+        // real_t rho = rho_physical.convert_to(mp_per_cc);
 
         // Compute T/µ
         real_t T_over_mu = (P_physical / rho_physical * mp_over_kb).convert_to(K);
@@ -361,15 +376,21 @@ public:
           }
         }
 
-        // Get Photon Stuff
-        std::array<double, N_GROUPS> N_PHOT{};
-        std::array<std::array<double, 3>, N_GROUPS> F_PHOT{};
+        auto phot_sub = Kokkos::subview(phot_pool, slot.value(), Kokkos::ALL());
+        auto flux_sub = Kokkos::subview(flux_pool, slot.value(), Kokkos::ALL(), Kokkos::ALL());
+        auto phot_tmp_sub = Kokkos::subview(phot_tmp_pool, slot.value(), Kokkos::ALL());
+        auto flux_tmp_sub = Kokkos::subview(flux_tmp_pool, slot.value(), Kokkos::ALL(), Kokkos::ALL());
 
-        for (auto i = 0; i < N_GROUPS; ++i) {
+        RTPhotonView N_PHOT(phot_sub.data(), n_groups);
+        RTFluxView F_PHOT(flux_sub.data(), n_groups);
+        RTPhotonView N_PHOT_tmp(phot_tmp_sub.data(), n_groups);
+        RTFluxView F_PHOT_tmp(flux_tmp_sub.data(), n_groups);
+
+        for (int i = 0; i < n_groups; ++i) {
           int index = 4 * i; // TODO: don't hardcode this
-          N_PHOT[i] = Uin_rt.at(iCell, index);
+          N_PHOT(i) = Uin_rt.at(iCell, index);
           for (auto j = 0; j < 3; ++j) {
-            F_PHOT[i][j] = Uin_rt.at(iCell, index + j + 1);
+            F_PHOT(i, j) = Uin_rt.at(iCell, index + j + 1);
           }
         }
 
@@ -401,6 +422,8 @@ public:
           nCO,
           N_PHOT,
           F_PHOT,
+          N_PHOT_tmp,
+          F_PHOT_tmp,
           out_T_over_mu,
           out_mu,
           20'000,
@@ -418,11 +441,11 @@ public:
           }
         }
 
-        for (auto i = 0; i < N_GROUPS; ++i) {
+        for (int i = 0; i < n_groups; ++i) {
           int index = 4 * i; // TODO: don't hardcode this
-          Uout_rt.at(iCell, index) = N_PHOT[i];
+          Uout_rt.at(iCell, index) = N_PHOT(i);
           for (auto j = 0; j < 3; ++j) {
-            Uout_rt.at(iCell, index + j + 1) = F_PHOT[i][j];
+            Uout_rt.at(iCell, index + j + 1) = F_PHOT(i, j);
           }
         }
 
