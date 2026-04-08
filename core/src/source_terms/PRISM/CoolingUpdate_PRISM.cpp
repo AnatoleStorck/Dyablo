@@ -203,14 +203,14 @@ public:
         data_path       ( configMap.getValue<std::string>("cooling", "data_path")),
         // HM12_UVB_data(PRISM::load_UVB_data(UVB_table_path)),
         ions            ( configMap.getValue<std::vector<std::string>>("cooling", "ions" ) ),
-        T_blackbody     ( configMap.getValue<real_t>("cooling", "T_blackbody", 1e4) ),
-        n_groups        ( configMap.getValue<int>("rt", "n_groups", 4) ),
         rt_groups_lower ( configMap.getValue<std::vector<real_t>>("rad", "photon_groups_lower",
                           {13.6, 15.2, 24.59, 54.42}) ),
         rt_groups_upper ( configMap.getValue<std::vector<real_t>>("rad", "photon_groups_upper",
                           {15.2, 24.59, 54.42, 500.0}) ),
         rtz_solver(data_path)
   {
+    n_groups = configMap.getValue<int>("rt", "n_groups", 4);
+    T_blackbody = configMap.getValue<real_t>("cooling", "T_blackbody", 1e4);
     PRISM::parseIonInputs(
       ions,
       this->nions_and_molecules, this->elems2passive, this->ions2passive, this->elem2atomicnum, this->ion_counts, this->molecule_counts,
