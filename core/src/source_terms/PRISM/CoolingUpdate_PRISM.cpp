@@ -141,7 +141,7 @@ namespace PRISM {
 
 namespace dyablo {
 constexpr bool constant_temperature = true;
-constexpr bool include_H2 = true;
+constexpr bool include_H2 = false;
 constexpr bool include_CO = false;
 constexpr bool rt_advect = true;
 constexpr bool include_self_shielding = false;
@@ -209,7 +209,7 @@ public:
                           {15.2, 24.59, 54.42, 500.0}) ),
         rtz_solver(data_path)
   {
-    n_groups = configMap.getValue<int>("rt", "n_groups", 4);
+    n_groups = configMap.getValue<int>("rad", "n_groups", 4);
     T_blackbody = configMap.getValue<real_t>("cooling", "T_blackbody", 1e4);
     PRISM::parseIonInputs(
       ions,
@@ -281,6 +281,7 @@ public:
 
 
     // RT accessors    std::vector<UserData::FieldAccessor::FieldInfo> rt_in;
+    //DYABLO_ASSERT_HOST_RELEASE(N_GROUPS == 1, "Only N_GROUPS=1 is currently supported");
     DYABLO_ASSERT_HOST_RELEASE(foreach_cell.getDim() == 3, "Only 3D is currently supported");
 
 
@@ -408,8 +409,17 @@ public:
             .include_charge_exchange        = true,
         };
 
-        // TODO: get metallicity
-        real_t metallicity = 1e-40;
+        // get metallicity
+        real_t metallicity;
+
+        metallicity = 0.0;
+        // Actually get metallicity from n_and_ion_fracs_loc
+        double nH = n_and_ion_fracs_loc.n_element[1];
+        double nHe = n_and_ion_fracs_loc.n_element[2];
+        double nC = n_and_ion_fracs_loc.n_element[6];
+        double nO = n_and_ion_fracs_loc.n_element[8];
+        double Z = (12*nC + 16*nO) / (nH + 4*nHe + 12*nC + 16*nO);
+        metallicity = Z;
 
         T_over_mu = 1e4;
 
@@ -457,6 +467,7 @@ public:
       }
     );
 
+    Kokkos::fence(); // Make sure all updates are finished before stopping timer
     timers.get("CoolingUpdate_PRISM").stop();
   }
 };

@@ -19,11 +19,11 @@ public:
   : foreach_cell    ( foreach_cell ),
     foreach_particle( foreach_cell.get_amr_mesh(), configMap ),
     timers          ( timers ),
-    // n_groups        ( configMap.getValue<int>("rt", "n_groups", 4) ),
+    // n_groups        ( configMap.getValue<int>("rad", "n_groups", 4) ),
     photon_rate     ( configMap.getValue<real_t>("star_feedback", "photon_rate", 1e49) ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) )
   {
-    n_groups = configMap.getValue<int>("rt", "n_groups", 4);
+    n_groups = configMap.getValue<int>("rad", "n_groups", 4);
   }
 
   ~ParticleUpdate_radiative_feedback() {}
