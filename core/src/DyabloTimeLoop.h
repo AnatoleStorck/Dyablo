@@ -305,6 +305,7 @@ public:
     }
 
     this->m_scalar_data.set("iter", m_iter_start);
+    this->m_scalar_data.set<int>("n_groups", configMap.getValue<int>("rt", "n_groups", 4));
     {
       real_t t0 = configMap.getValue<real_t>("run", "tStart", t0_default);
       this->m_scalar_data.set("time", t0);
@@ -793,8 +794,9 @@ public:
     }
 
     if( this->rad_updater ){
+      const int n_groups = m_scalar_data.get<int>("n_groups");
       // Push by group
-      for (int g = 0; g < N_GROUPS; g++) {
+      for (int g = 0; g < n_groups; g++) {
         fields_to_exchange.push_back("e_rad_" + std::to_string(g));
         fields_to_exchange.push_back("fx_rad_" + std::to_string(g));
         fields_to_exchange.push_back("fy_rad_" + std::to_string(g));
@@ -855,8 +857,9 @@ public:
 
       if( rad_updater )
       {
+        const int n_groups = m_scalar_data.get<int>("n_groups");
         // generate update fields for each group
-        for (int g = 0; g < N_GROUPS; g++) {
+        for (int g = 0; g < n_groups; g++) {
           auto suffix = "_" + std::to_string(g) + "_next";
           U.new_fields({"e_rad" + suffix, "fx_rad" + suffix, "fy_rad" + suffix, "fz_rad" + suffix});
         }
@@ -894,8 +897,9 @@ public:
       }
       if(rad_updater)
       {
+        const int n_groups = m_scalar_data.get<int>("n_groups");
         // Move by group
-        for (int g = 0; g < N_GROUPS; g++) {
+        for (int g = 0; g < n_groups; g++) {
           auto suffix = "_" + std::to_string(g);
           U.move_field("e_rad"  + suffix, "e_rad"  + suffix + "_next");
           U.move_field("fx_rad" + suffix, "fx_rad" + suffix + "_next");
