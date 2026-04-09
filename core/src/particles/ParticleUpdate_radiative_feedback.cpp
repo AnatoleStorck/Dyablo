@@ -59,6 +59,7 @@ public:
     real_t aexp = scalar_data.get<real_t>("aexp");
 
     // Gather SN feedback parameters
+    const int n_groups = this->n_groups;
     const real_t photon_rate = this->photon_rate;
     const real_t photon_rate_group = photon_rate / n_groups;
     const real_t dt_physical = Units::supercomoving_to_physical<Units::Time>(
