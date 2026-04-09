@@ -39,11 +39,11 @@ public:
 
     timers.get("ParticleUpdate_radiative_feedback").start();
 
-    std::vector<UserData_fields::FieldAccessor_FieldInfo> Uout_infos;
+    std::vector<UserData::FieldAccessor_FieldInfo> Uout_infos;
     for (int g = 0; g < n_groups; ++g) {
       Uout_infos.push_back({"e_rad_" + std::to_string(g), g});
     }
-    // std::vector<UserData_particles::ParticleAccessor_AttributeInfo>
+    // std::vector<UserData::ParticleAccessor_AttributeInfo>
     //   pinfos = {{"mass", IMASS}, {"birth_time", IBIRTH}};
 
     // Get accessors
