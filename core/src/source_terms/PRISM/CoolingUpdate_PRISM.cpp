@@ -290,24 +290,15 @@ public:
     //DYABLO_ASSERT_HOST_RELEASE(N_GROUPS == 1, "Only N_GROUPS=1 is currently supported");
     DYABLO_ASSERT_HOST_RELEASE(foreach_cell.getDim() == 3, "Only 3D is currently supported");
 
-
-    // Create accessors for all photon group fields (e_rad_<g>_next, fx_rad_<g>_next, ...)
-    const auto rt_field_name = [](const char* base, int g, bool next) {
-      std::string name(base);
-      name += "_" + std::to_string(g);
-      if (next) name += "_next";
-      return name;
-    };
-
     std::vector<UserData::FieldAccessor::FieldInfo> rt_fields;
     rt_fields.reserve(4 * n_groups);
 
     for (int g = 0; g < n_groups; ++g) {
       const int off = 4 * g;
-      rt_fields.push_back({rt_field_name("e_rad",  g, true), off + 0});
-      rt_fields.push_back({rt_field_name("fx_rad", g, true), off + 1});
-      rt_fields.push_back({rt_field_name("fy_rad", g, true), off + 2});
-      rt_fields.push_back({rt_field_name("fz_rad", g, true), off + 3});
+      rt_fields.push_back({"e_rad_"  + std::to_string(g) + "_next", off + 0});
+      rt_fields.push_back({"fx_rad_" + std::to_string(g) + "_next", off + 1});
+      rt_fields.push_back({"fy_rad_" + std::to_string(g) + "_next", off + 2});
+      rt_fields.push_back({"fz_rad_" + std::to_string(g) + "_next", off + 3});
     }
     UserData::FieldAccessor Uin_rt = U.getAccessor(rt_fields);
     UserData::FieldAccessor Uout_rt = U.getAccessor(rt_fields);
