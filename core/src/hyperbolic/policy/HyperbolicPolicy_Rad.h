@@ -52,45 +52,31 @@ struct HyperbolicPolicy_Rad_Params
 
   int ndim;
   real_t c_rad;
-  int group_id = 0;
 };
 
 class HyperbolicPolicy_State_Rad
 {
 private:
-  static int resolve_group_id(const HyperbolicPolicy_Rad_Params& params,
-                              const ScalarSimulationData& scalar_data)
-  {
-    auto& scalar_data_mut = const_cast<ScalarSimulationData&>(scalar_data);
-    if (scalar_data_mut.hasValue<int>("rad_group_id"))
-      return scalar_data.get<int>("rad_group_id");
-    return params.group_id;
-  }
-
   int ndim;
-  int group_id;
   using CellIndex = ForeachCell::CellIndex;
   using FieldAccessor = UserData::FieldAccessor;
 public:
   using PrimState = HyperbolicPolicy_RadState;
   using ConsState = HyperbolicPolicy_RadState;
 
-  HyperbolicPolicy_State_Rad( const HyperbolicPolicy_Rad_Params& params,
-                              const ScalarSimulationData& scalar_data )
-  : ndim(params.ndim),
-    group_id(resolve_group_id(params, scalar_data))
+  HyperbolicPolicy_State_Rad( const HyperbolicPolicy_Rad_Params& params )
+  : ndim(params.ndim)
   {}
 
   using ConsVarIndex = ConsState::VarIndex;
 
   FieldAccessor getUin( UserData& U ) const
   {
-    const std::string suffix = "_" + std::to_string(group_id);
     std::vector<FieldAccessor::FieldInfo> Uin_fieldinfo { 
-      {"e_rad"  + suffix, ConsVarIndex::Ie_rad}, 
-      {"fx_rad" + suffix, ConsVarIndex::Ifx_rad},
-      {"fy_rad" + suffix, ConsVarIndex::Ify_rad},
-      {"fz_rad" + suffix, ConsVarIndex::Ifz_rad}
+      {"e_rad",   ConsVarIndex::Ie_rad}, 
+      {"fx_rad",  ConsVarIndex::Ifx_rad},
+      {"fy_rad",  ConsVarIndex::Ify_rad},
+      {"fz_rad",  ConsVarIndex::Ifz_rad}
     };
 
     return U.getAccessor( Uin_fieldinfo );
@@ -98,12 +84,11 @@ public:
 
   FieldAccessor getUout( UserData& U ) const
   {
-    const std::string suffix = "_" + std::to_string(group_id) + "_next";
     std::vector<FieldAccessor::FieldInfo> Uout_fieldinfo { 
-      {"e_rad"  + suffix, ConsVarIndex::Ie_rad}, 
-      {"fx_rad" + suffix, ConsVarIndex::Ifx_rad},
-      {"fy_rad" + suffix, ConsVarIndex::Ify_rad},
-      {"fz_rad" + suffix, ConsVarIndex::Ifz_rad}
+      {"e_rad_next",   ConsVarIndex::Ie_rad}, 
+      {"fx_rad_next",  ConsVarIndex::Ifx_rad},
+      {"fy_rad_next",  ConsVarIndex::Ify_rad},
+      {"fz_rad_next",  ConsVarIndex::Ifz_rad} 
     };
     return U.getAccessor( Uout_fieldinfo );
   }
@@ -491,7 +476,7 @@ public:
   }
 
   HyperbolicPolicy_Rad_impl( const Params& params, const ScalarSimulationData& scalar_data )
-  : HyperbolicPolicy_State_Rad(params.policy_params, scalar_data),
+  : HyperbolicPolicy_State_Rad(params.policy_params),
     HyperbolicPolicy_RiemannSolver_Rad_M1(params.policy_params, scalar_data),
     Slope_t(params.slope_params),
     BoundaryConditions_t(params.bc_params, scalar_data)
