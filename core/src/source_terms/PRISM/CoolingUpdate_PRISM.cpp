@@ -209,15 +209,21 @@ public:
                           {15.2, 24.59, 54.42, 500.0}) ),
         rtz_solver(data_path)
   {
-    n_groups = configMap.getValue<int>("rad", "n_groups", 4);
-    T_blackbody = configMap.getValue<real_t>("cooling", "T_blackbody", 1e4);
+    n_groups           = configMap.getValue<int>("rad", "n_groups", 4);
+    T_blackbody        = configMap.getValue<real_t>("cooling", "T_blackbody", 1e4);
     PRISM::parseIonInputs(
       ions,
       this->nions_and_molecules, this->elems2passive, this->ions2passive, this->elem2atomicnum, this->ion_counts, this->molecule_counts,
       include_H2
     );
     PRISM::parsePhotonGroupInputs(n_groups, rt_groups_lower, rt_groups_upper, this->E_min, this->E_max);
-    rtz_solver.set_photon_groups(this->E_min, this->E_max);
+    std::array<double, N_GROUPS> E_min_tmp;
+    std::array<double, N_GROUPS> E_max_tmp;
+    for (int i = 0; i < n_groups; ++i) {
+      E_min_tmp[i] = this->E_min[i];
+      E_max_tmp[i] = this->E_max[i];
+    }
+    rtz_solver.set_photon_groups(E_min_tmp, E_max_tmp);
     for (int i = 0; i < MAX_ELEMENTS; ++i)
       ion_counts_total += nions_and_molecules[i];
 
@@ -338,10 +344,6 @@ public:
     using exec_space = Kokkos::DefaultExecutionSpace;
     Kokkos::Experimental::UniqueToken<exec_space> token;
     Kokkos::View<CompactIonData*> compact_data("PRISM_compact_data", token.size());
-    Kokkos::View<double**> phot_pool("PRISM_phot_pool", token.size(), n_groups);
-    Kokkos::View<double***> flux_pool("PRISM_flux_pool", token.size(), n_groups, N_DIM);
-    Kokkos::View<double**> phot_tmp_pool("PRISM_phot_tmp_pool", token.size(), n_groups);
-    Kokkos::View<double***> flux_tmp_pool("PRISM_flux_tmp_pool", token.size(), n_groups, N_DIM);
 
     // ------ Call PRISM cooling update on each cell ------
     foreach_cell.foreach_cell( "CoolingUpdate_PRISM", Uin.getShape(),
@@ -377,21 +379,14 @@ public:
           }
         }
 
-        auto phot_sub = Kokkos::subview(phot_pool, slot.value(), Kokkos::ALL());
-        auto flux_sub = Kokkos::subview(flux_pool, slot.value(), Kokkos::ALL(), Kokkos::ALL());
-        auto phot_tmp_sub = Kokkos::subview(phot_tmp_pool, slot.value(), Kokkos::ALL());
-        auto flux_tmp_sub = Kokkos::subview(flux_tmp_pool, slot.value(), Kokkos::ALL(), Kokkos::ALL());
-
-        RTPhotonView N_PHOT(phot_sub.data(), n_groups);
-        RTFluxView F_PHOT(flux_sub.data(), n_groups);
-        RTPhotonView N_PHOT_tmp(phot_tmp_sub.data(), n_groups);
-        RTFluxView F_PHOT_tmp(flux_tmp_sub.data(), n_groups);
-
-        for (int i = 0; i < n_groups; ++i) {
+        // Get Photon Stuff
+        std::array<double, N_GROUPS> N_PHOT{};
+        std::array<std::array<double, 3>, N_GROUPS> F_PHOT{};
+        for (auto i = 0; i < N_GROUPS; ++i) {
           int index = 4 * i; // TODO: don't hardcode this
-          N_PHOT(i) = Uin_rt.at(iCell, index);
+          N_PHOT[i] = Uin_rt.at(iCell, index);
           for (auto j = 0; j < 3; ++j) {
-            F_PHOT(i, j) = Uin_rt.at(iCell, index + j + 1);
+            F_PHOT[i][j] = Uin_rt.at(iCell, index + j + 1);
           }
         }
 
@@ -432,8 +427,6 @@ public:
           nCO,
           N_PHOT,
           F_PHOT,
-          N_PHOT_tmp,
-          F_PHOT_tmp,
           out_T_over_mu,
           out_mu,
           20'000,
@@ -451,11 +444,11 @@ public:
           }
         }
 
-        for (int i = 0; i < n_groups; ++i) {
+        for (auto i = 0; i < N_GROUPS; ++i) {
           int index = 4 * i; // TODO: don't hardcode this
-          Uout_rt.at(iCell, index) = N_PHOT(i);
+          Uout_rt.at(iCell, index) = N_PHOT[i];
           for (auto j = 0; j < 3; ++j) {
-            Uout_rt.at(iCell, index + j + 1) = F_PHOT(i, j);
+            Uout_rt.at(iCell, index + j + 1) = F_PHOT[i][j];
           }
         }
 
