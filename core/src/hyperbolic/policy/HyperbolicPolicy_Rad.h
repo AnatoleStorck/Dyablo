@@ -47,11 +47,13 @@ struct HyperbolicPolicy_Rad_Params
     return {
       .ndim = configMap.getValue<int>("mesh", "ndim", 3),
       .c_rad = configMap.getValue_in_code_unit<Units::Velocity>("rad", "c_rad", "speedoflight"),
+      .n_groups = configMap.getValue<int>("rad", "n_groups", 4)
     };
   }
 
   int ndim;
   real_t c_rad;
+  int n_groups;
 };
 
 class HyperbolicPolicy_State_Rad
