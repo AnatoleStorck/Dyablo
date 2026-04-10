@@ -12,8 +12,7 @@ public:
   // Update method is overridden to loop over radiation groups and set "rad_group_id" in scalar_data for each group, so that HyperbolicPolicy_Rad can use it to select the correct group in the state variables
   void update( UserData& U, ScalarSimulationData& scalar_data ) override
   {
-    const int n_groups = scalar_data.hasValue<int>("n_groups") ? scalar_data.get<int>("n_groups") : 1;
-
+    const int n_groups = policy_params.policy_params.n_groups;
     for (int g = 0; g < n_groups; ++g)
     {
       // Rename variables for the current group so the solver operates on the correct group data

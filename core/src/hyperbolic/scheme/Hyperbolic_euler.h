@@ -293,7 +293,7 @@ public:
     timers.get("HyperbolicUpdate_euler").stop();
   }
 
-private:
+protected:
   ForeachCell& foreach_cell;
   
   Timers& timers;  
