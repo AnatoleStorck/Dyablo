@@ -2,7 +2,6 @@
 #include "utils/units/Units.h"
 #include "ForeachParticle.h"
 #include "states/State_hydro.h"
-#include "types.hpp"
 
 #include <Kokkos_Core.hpp>
 

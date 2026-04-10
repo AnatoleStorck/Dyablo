@@ -1,6 +1,5 @@
 #include "hyperbolic/policy/HyperbolicPolicy_Rad.h"
 #include "hyperbolic/scheme/Hyperbolic_euler.h"
-#include "types.hpp"
 
 namespace dyablo{
 
