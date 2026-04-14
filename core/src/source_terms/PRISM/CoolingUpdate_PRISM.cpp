@@ -209,6 +209,9 @@ public:
                           {15.2, 24.59, 54.42, 500.0}) ),
         rtz_solver(data_path)
   {
+    auto code_velocity = Units::code_units().getUnit<Units::Velocity>();
+    c_rad              = configMap.getValue_in_code_unit<Units::Velocity>("rad", "c_rad", "speedoflight");
+    c_tilde = (c_rad * code_velocity).convert_to(Units::SPEEDOFLIGHT());
     n_groups           = configMap.getValue<int>("rad", "n_groups", 4);
     T_blackbody        = configMap.getValue<real_t>("cooling", "T_blackbody", 1e4);
     PRISM::parseIonInputs(
@@ -217,6 +220,7 @@ public:
       include_H2
     );
     PRISM::parsePhotonGroupInputs(n_groups, rt_groups_lower, rt_groups_upper, this->E_min, this->E_max);
+    rtz_solver.set_reduced_speed_of_light_factor(c_tilde);
     std::array<double, N_GROUPS> E_min_tmp;
     std::array<double, N_GROUPS> E_max_tmp;
     for (int i = 0; i < n_groups; ++i) {
