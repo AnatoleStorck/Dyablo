@@ -125,6 +125,7 @@ void run_test(int ndim, std::string HyperbolicUpdate_id ) {
   bool is_glm  = HyperbolicUpdate_id.find("GLM") != std::string::npos;
   bool is_gravity = HyperbolicUpdate_id.find("gravity") != std::string::npos;
   bool is_rhd = HyperbolicUpdate_id.find("Rad") != std::string::npos;
+  bool has_passive_scalars = HyperbolicUpdate_id.find("passive_scalar") != std::string::npos;
 
   if( is_gravity )
     GTEST_SKIP();
@@ -132,10 +133,15 @@ void run_test(int ndim, std::string HyperbolicUpdate_id ) {
   if( is_rhd )
     GTEST_SKIP();
 
+  if ( has_passive_scalars )
+    GTEST_SKIP();
+
   // Content of .ini file used to configure configmap and HydroParams
   std::string configmap_str;
   if (has_mhd) {
     configmap_str = 
+        "[run]\n"
+        "n_passive_scalars=0\n"
         "[output]\n"
         "outputPrefix=test_Conservativity\n"
         "write_variables=rho,e_tot,Bx,By,Bz,level,rank\n"
@@ -146,6 +152,8 @@ void run_test(int ndim, std::string HyperbolicUpdate_id ) {
   }
   else {
     configmap_str = 
+        "[run]\n"
+        "n_passive_scalars=0\n"
         "[output]\n"
         "outputPrefix=test_Conservativity\n"
         "write_variables=rho,e_tot,level,rank\n"
