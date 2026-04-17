@@ -18,6 +18,7 @@
 #include "amr/MapUserData.h"
 #include "parabolic/ParabolicUpdate.h"
 #include "source_terms/SourceUpdate.h"
+#include "passive_scalars/PassiveScalar_IC.h"
 #include "UserData.h"
 #include "Cosmo.h"
 #include "mpi/GhostCommunicator.h"
@@ -232,6 +233,17 @@ public:
   {
     timers.get("Init").start();
 
+    // Passive scalars
+    // Needs to be first so that n_passive_scalars is defined for the policies
+    passive_scalars_names = configMap.getValue<std::vector<std::string>>("run", "passive_scalars_names", {});
+    n_passive_scalars = configMap.getValue<int>("run", "n_passive_scalars", passive_scalars_names.size());
+    if (n_passive_scalars > 0) {
+      std::set<std::string> field_names;
+      for (auto &name: passive_scalars_names)
+        field_names.insert(name);
+      U.new_fields(field_names);
+    }
+
     // .ini : report legacy hydro/problem to run/initial_conditions
     if( configMap.hasValue("hydro", "problem") )
     {
@@ -438,7 +450,40 @@ public:
         m_foreach_cell,
         timers);
     }
+    
+    timers.get("passive_scalar_init").start();
+    // Get initial conditions ids
+    std::vector<std::string> passive_scalars_ids = configMap.getValue<std::vector<std::string>>("run", "passive_scalars_init", {});
+    // Initialize cells
+    {
+      int passive_id = 0;
+      for( std::string init_name : passive_scalars_ids )
+      {
+        if (init_name == "none")
+          continue;
+        std::unique_ptr<PassiveScalar_IC> passive_scalar_ic =
+          PassiveScalar_IC_Factory::make_instance(init_name, 
+            configMap,
+            m_foreach_cell,
+            timers,
+            passive_scalars_names[passive_id]);
+        passive_scalar_ic->init( U );
+        passive_id++;
+      }  
 
+      auto fields = U.getEnabledFields();
+      std::cout << "Enabled fields : " << std::endl;
+      for (auto f: fields)
+        std::cout << " " << f << std::endl;
+      
+      // Once all passive scalars have been initialized we transfer the arrays to the hydro passive scalars
+      for (int i=0; i < std::min(n_passive_scalars, 3); ++i) {
+        std::ostringstream oss;
+        oss << "rho_scalar_" << i;
+        U.move_field(oss.str(), passive_scalars_names[i]);
+      }
+    } 
+    timers.get("passive_scalar_init").stop();
 
     // Sanity check : No sense in doing parabolic update without hydro 
     DYABLO_ASSERT_HOST_RELEASE(godunov_updater || !viscosity_updater, "Cannot have viscosity without hydro !");
@@ -559,6 +604,15 @@ public:
 
     // Always output after last iteration
     timers.get("outputs").start();
+    
+    // Renaming passive scalars before outputting
+    if (n_passive_scalars > 0) {
+      for (int i=0; i < n_passive_scalars; ++i) {
+        std::ostringstream oss;
+        oss << "rho_scalar_" << i;
+        U.move_field(passive_scalars_names[i], oss.str());
+      }
+    }
     if( m_enable_output )
       io_manager->save_snapshot(U, m_scalar_data);
     timers.get("outputs").stop();
@@ -592,6 +646,15 @@ public:
    **/
   void step()
   {
+    // Renaming passive scalars before outputting
+    if (n_passive_scalars > 0) {
+      for (int i=0; i < n_passive_scalars; ++i) {
+        std::ostringstream oss;
+        oss << "rho_scalar_" << i;
+        U.move_field(passive_scalars_names[i], oss.str());
+      }
+    }
+
     // Write output files
     {
       timers.get("outputs").start();
@@ -622,6 +685,15 @@ public:
         io_manager_checkpoint->save_snapshot(U, m_scalar_data);
       }
       timers.get("checkpoint").stop();
+    }
+
+    // And moving back
+    if (n_passive_scalars > 0) {
+      for (int i=0; i < n_passive_scalars; ++i) {
+        std::ostringstream oss;
+        oss << "rho_scalar_" << i;
+        U.move_field(oss.str(), passive_scalars_names[i]);
+      }
     }
 
     // Compute new dt
@@ -748,6 +820,8 @@ public:
     if( godunov_updater )
     {
       U.new_fields({"rho_next", "e_tot_next", "rho_vx_next", "rho_vy_next", "rho_vz_next"});    
+      U.new_fields({"rho_scalar_0_next", "rho_scalar_1_next", "rho_scalar_2_next"});
+
       // TODO automatic new fields according to kernel
       if( this->has_mhd ) {
         U.new_fields({"Bx_next", "By_next", "Bz_next"});
@@ -779,6 +853,9 @@ public:
       U.move_field( "rho_vx", "rho_vx_next" ); 
       U.move_field( "rho_vy", "rho_vy_next" ); 
       U.move_field( "rho_vz", "rho_vz_next" );
+      U.move_field( "rho_scalar_0", "rho_scalar_0_next" );
+      U.move_field( "rho_scalar_1", "rho_scalar_1_next" );
+      U.move_field( "rho_scalar_2", "rho_scalar_2_next" );
       if( this->has_mhd )
       {
         U.move_field( "Bx", "Bx_next" ); 
@@ -901,6 +978,9 @@ private:
   std::unique_ptr<ParabolicUpdate> thermal_conduction_updater;
   std::unique_ptr<ParabolicUpdate> viscosity_updater;
   std::vector<std::unique_ptr<SourceUpdate>> source_updaters;
+
+  int n_passive_scalars;
+  std::vector<std::string> passive_scalars_names;
 
   Timers timers;
 };
