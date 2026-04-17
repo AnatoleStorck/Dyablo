@@ -35,6 +35,11 @@ struct State_tuple<_T0, Ts...>
     State_tuple(T0 h, Ts... t)
     : head(h), tail(t...)
     {}
+
+    KOKKOS_INLINE_FUNCTION
+    State_tuple(T0 h, const State_tuple<Ts...>& ts)
+    : head(h), tail(ts)
+    {}
 };
 
 template<>
