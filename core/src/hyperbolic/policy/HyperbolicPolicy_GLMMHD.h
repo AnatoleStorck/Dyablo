@@ -156,7 +156,7 @@ struct HyperbolicPolicy_GLMMHD_Params
 
 class HyperbolicPolicy_State_GLMMHD
 {
-private:
+protected:
   int ndim;
   real_t gamma0;
 
@@ -360,14 +360,24 @@ public:
     scalar_data( {scalar_data_dict.get<real_t>("dt")} )
   {}
 
+protected:
   KOKKOS_INLINE_FUNCTION
-  ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir ) const
+  ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir, real_t& ustar ) const
   {
     qL = swapComponents(qL, dir);
     qR = swapComponents(qR, dir);
-    ConsState flux = riemann_hlld(qL, qR);
+    ConsState flux = riemann_hlld(qL, qR, ustar);
     flux = swapComponents(flux, dir);
     return flux;
+  }
+
+public:
+
+  KOKKOS_INLINE_FUNCTION
+  ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir ) const
+  {
+    real_t ustar;
+    return riemann_solver( qL, qR, dir, ustar );
   }
 
 private:
@@ -407,7 +417,7 @@ private:
   }
 
   KOKKOS_INLINE_FUNCTION
-  ConsState riemann_hlld( PrimState qleft, PrimState qright ) const
+  ConsState riemann_hlld( PrimState qleft, PrimState qright, real_t &ustar ) const
   {
     real_t gamma0 = rparams.gamma0;
     real_t smallr = rparams.smallr;
@@ -556,6 +566,9 @@ private:
       
       return res;
     };
+
+    // Copying ustar for passive scalars
+    ustar = uS;
 
     // Disjunction of cases
     PrimState q; 
@@ -1044,7 +1057,7 @@ class HyperbolicPolicy_GLMMHD_impl
     public HyperbolicPolicy_Slope_dynamic<HyperbolicPolicy_State_GLMMHD>,
     public HyperbolicPolicy_BoundaryConditions_GLMMHD
 {
-private:
+protected:
   using CellIndex     = ForeachCell::CellIndex;
   using CellMetaData  = ForeachCell::CellMetaData;
   using State = HyperbolicPolicy_State_GLMMHD;
