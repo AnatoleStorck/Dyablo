@@ -23,10 +23,10 @@ struct HyperbolicPolicy_ConsHydroState {
   static std::vector<UserData::FieldAccessor::FieldInfo> getFieldsInfo()
   {
     return  { {"rho",     VarIndex::Irho}, 
-              {"e_tot",   VarIndex::Ie_tot},
-              {"rho_vx",  VarIndex::Irho_vx},
-              {"rho_vy",  VarIndex::Irho_vy},
-              {"rho_vz",  VarIndex::Irho_vz} };
+      {"e_tot",   VarIndex::Ie_tot},
+      {"rho_vx",  VarIndex::Irho_vx},
+      {"rho_vy",  VarIndex::Irho_vy},
+      {"rho_vz",  VarIndex::Irho_vz} };
   }
 
   real_t rho = 0;
@@ -37,11 +37,6 @@ struct HyperbolicPolicy_ConsHydroState {
 };
 
 DECLARE_STATE_TYPE( HyperbolicPolicy_ConsHydroState, 5 );
-DECLARE_STATE_GET( HyperbolicPolicy_ConsHydroState, 0, rho );
-DECLARE_STATE_GET( HyperbolicPolicy_ConsHydroState, 1, e_tot );
-DECLARE_STATE_GET( HyperbolicPolicy_ConsHydroState, 2, rho_u );
-DECLARE_STATE_GET( HyperbolicPolicy_ConsHydroState, 3, rho_v );
-DECLARE_STATE_GET( HyperbolicPolicy_ConsHydroState, 4, rho_w );
 
 /**
  * @brief Structure holding primitive hydrodynamics variables
@@ -64,12 +59,6 @@ struct HyperbolicPolicy_PrimHydroState {
 };
 
 DECLARE_STATE_TYPE( HyperbolicPolicy_PrimHydroState, 5 );
-DECLARE_STATE_GET( HyperbolicPolicy_PrimHydroState, 0, rho );
-DECLARE_STATE_GET( HyperbolicPolicy_PrimHydroState, 1, p );
-DECLARE_STATE_GET( HyperbolicPolicy_PrimHydroState, 2, u );
-DECLARE_STATE_GET( HyperbolicPolicy_PrimHydroState, 3, v );
-DECLARE_STATE_GET( HyperbolicPolicy_PrimHydroState, 4, w );
-
 struct HyperbolicPolicy_Hydro_Params
 {
   static HyperbolicPolicy_Hydro_Params from_configMap( ConfigMap& configMap )
@@ -112,26 +101,15 @@ public:
 
   FieldAccessor getUin( UserData& U ) const
   {
-    std::vector<FieldAccessor::FieldInfo> Uin_fieldinfo { 
-      {"rho",     ConsVarIndex::Irho}, 
-      {"e_tot",   ConsVarIndex::Ie_tot},
-      {"rho_vx",  ConsVarIndex::Irho_vx},
-      {"rho_vy",  ConsVarIndex::Irho_vy},
-      {"rho_vz",  ConsVarIndex::Irho_vz} 
-    };
-
+    auto Uin_fieldinfo = ConsState::getFieldsInfo();
     return U.getAccessor( Uin_fieldinfo );
   }
 
   FieldAccessor getUout( UserData& U ) const
   {
-    std::vector<FieldAccessor::FieldInfo> Uout_fieldinfo { 
-      {"rho_next",     ConsVarIndex::Irho}, 
-      {"e_tot_next",   ConsVarIndex::Ie_tot},
-      {"rho_vx_next",  ConsVarIndex::Irho_vx},
-      {"rho_vy_next",  ConsVarIndex::Irho_vy},
-      {"rho_vz_next",  ConsVarIndex::Irho_vz} 
-    };
+    auto Uout_fieldinfo = ConsState::getFieldsInfo();
+    for (auto &v: Uout_fieldinfo)
+      v.name += "_next";
     return U.getAccessor( Uout_fieldinfo );
   }
 
@@ -251,14 +229,23 @@ public:
     })
   {}
 
+protected:
   KOKKOS_INLINE_FUNCTION
-  ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir ) const
+  ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir, real_t& ustar ) const
   {
     qL = swapComponents(qL, dir);
     qR = swapComponents(qR, dir);
-    ConsState flux = riemann_hllc(qL, qR);
+    ConsState flux = riemann_hllc(qL, qR, ustar);
     flux = swapComponents(flux, dir);
     return flux;
+  }
+
+public:
+  KOKKOS_INLINE_FUNCTION
+  ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir ) const
+  {
+    real_t ustar;
+    return riemann_solver( qL, qR, dir, ustar );
   }
 
 private:
@@ -298,7 +285,7 @@ private:
   }
 
   KOKKOS_INLINE_FUNCTION
-  ConsState riemann_hllc( PrimState qleft, PrimState qright) const
+  ConsState riemann_hllc( PrimState qleft, PrimState qright, real_t& ustar) const
   {
     real_t gamma0 = rparams.gamma0;
     real_t smallr = rparams.smallr;
@@ -343,7 +330,7 @@ private:
     real_t rcr = rr*(SR-ur);
     
     // Compute acoustic star state
-    real_t ustar    = (rcr*ur   +rcl*ul   +  (ptotl-ptotr))/(rcr+rcl);
+    /*real_t*/ ustar    = (rcr*ur   +rcl*ul   +  (ptotl-ptotr))/(rcr+rcl);
     real_t ptotstar = (rcr*ptotl+rcl*ptotr+rcl*rcr*(ul-ur))/(rcr+rcl);
 
     // Left star region variables
@@ -419,7 +406,7 @@ class HyperbolicPolicy_Hydro_impl
     public HyperbolicPolicy_Slope_dynamic<HyperbolicPolicy_State_Hydro>,
     public HyperbolicPolicy_BoundaryConditions_Hydro_dynamic
 {
-private:
+protected:
   using CellIndex     = ForeachCell::CellIndex;
   using CellMetaData  = ForeachCell::CellMetaData;
   using State = HyperbolicPolicy_State_Hydro;
@@ -507,5 +494,6 @@ public:
 };
 
 using HyperbolicPolicy_Hydro = HyperbolicPolicy_base< HyperbolicPolicy_Hydro_impl >;
+
 
 } //namespace dyablo
