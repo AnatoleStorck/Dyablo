@@ -17,8 +17,13 @@ class HyperbolicPolicy_base
 {
 protected:
   HyperbolicPolicy_impl impl;
-
 public:
+  KOKKOS_INLINE_FUNCTION
+  const HyperbolicPolicy_impl& get_impl() const
+  {
+    return impl;
+  }
+
   /// Structure containing primitive variables
   using PrimState = typename HyperbolicPolicy_impl::PrimState;
   /// Structure containing conservative variables
