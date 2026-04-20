@@ -49,6 +49,7 @@ class AnalyticalFormula_tri_layer;
 
 // Other code format
 class InitialConditions_gadget;
+class InitialConditions_uniform_metallicity;
 
 
 } // namespace dyablo
@@ -102,6 +103,7 @@ bool dyablo::InitialConditionsFactory::init()
   DECLARE_REGISTERED( dyablo::InitialConditions_analytical<dyablo::AnalyticalFormula_tri_layer> );
 
   DECLARE_REGISTERED( dyablo::InitialConditions_gadget );
+  DECLARE_REGISTERED( dyablo::InitialConditions_uniform_metallicity );
 
   return true;
 }
