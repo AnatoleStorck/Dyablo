@@ -214,7 +214,7 @@ public:
     // Those always exist
     const auto& xp = hdf5_reader.read_dataset<Darr2D>(gadget_part_name + "/Coordinates");
     const auto& vp = hdf5_reader.read_dataset<Darr2D>(gadget_part_name + "/Velocities");
-    const auto& idp = hdf5_reader.read_dataset<Kokkos::View<uint32_t*> >(gadget_part_name + "/ParticleIDs");
+    const auto& idp = hdf5_reader.read_dataset<Kokkos::View<uint64_t*> >(gadget_part_name + "/ParticleIDs");
 
     DYABLO_ASSERT_HOST_RELEASE(
         (xp.extent(0) == Npart) && (vp.extent(0) == Npart) && (idp.extent(0) == Npart),
