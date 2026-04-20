@@ -586,7 +586,10 @@ public:
     SPH_interpolation(false);
 
     // Remove "gas" particles
-    U.delete_ParticleArray("gas");
+    if( !U.has_ParticleArray("gas") )
+        std::cout << "No gas particles found, skipping removal of gas particle array" << std::endl;
+    else
+        U.delete_ParticleArray("gas");
 
   }
 
