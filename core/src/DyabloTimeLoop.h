@@ -12,6 +12,7 @@
 #include "refine_condition/RefineCondition.h"
 #include "init/InitialConditions.h"
 #include "io/IOManager.h"
+#include "io/Output_Movie.h"
 #include "gravity/GravitySolver.h"
 #include "hyperbolic/HyperbolicUpdate.h"
 #include "particles/ParticleUpdate.h"
@@ -414,6 +415,10 @@ public:
       );
     }
 
+    this->output_movie = std::make_unique<Output_Movie>(configMap, m_foreach_cell);
+    if( !this->output_movie->is_enabled() )
+      this->output_movie.reset();
+
     std::vector<std::string> compute_dt_ids = configMap.getValue<std::vector<std::string>>("dt", "dt_kernel", {"Compute_dt_hydro"});
     DYABLO_ASSERT_HOST_RELEASE(compute_dt_ids.size() > 0, "dt_kernel should not be empty !");
     for (auto compute_dt_id: compute_dt_ids) {
@@ -632,6 +637,8 @@ public:
     }
     if( m_enable_output )
       io_manager->save_snapshot(U, m_scalar_data);
+    if( output_movie )
+      output_movie->save_frame(U, m_scalar_data);
     timers.get("outputs").stop();
     timers.get("checkpoint").start();
     if( m_enable_checkpoint )
@@ -675,6 +682,7 @@ public:
     // Write output files
     {
       timers.get("outputs").start();
+      bool output_written = false;
       if( m_enable_output && m_iteration_handler->output_trigger(m_scalar_data) )
       {
         int rank = m_communicator.MPI_Comm_rank();
@@ -684,6 +692,17 @@ public:
           m_scalar_data.print();
         }
         io_manager->save_snapshot(U, m_scalar_data);
+        output_written = true;
+      }
+      if( output_movie && output_movie->should_output(m_scalar_data, output_written) )
+      {
+        int rank = m_communicator.MPI_Comm_rank();
+        if( rank == 0 )
+        {
+          std::cout << "Movie: ";
+          m_scalar_data.print();
+        }
+        output_movie->save_frame(U, m_scalar_data);
       }
       timers.get("outputs").stop();
     }
@@ -1012,6 +1031,7 @@ private:
   std::unique_ptr<ParticleUpdate> particle_position_updater, particle_update_density, particle_spawn;
   std::unique_ptr<MapUserData> mapUserData;
   std::unique_ptr<IOManager> io_manager, io_manager_checkpoint;
+  std::unique_ptr<Output_Movie> output_movie;
   std::unique_ptr<GravitySolver> gravity_solver;
   std::unique_ptr<HyperbolicUpdate> gravity_update;
 
