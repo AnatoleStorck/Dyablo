@@ -266,6 +266,8 @@ DEFINE_UNIT( amu        , Dalton() );
 DEFINE_UNIT( electronvolt, 1.602176634e-19 * Joule() );
 DEFINE_UNIT( eV         , electronvolt() );
 
+DEFINE_UNIT( number_density, 1 / (cm() * cm() * cm()) );
+
 // Convenient multiples
 DEFINE_UNIT( m2         , m() * m() );
 DEFINE_UNIT( m3         , m() * m() * m() );
