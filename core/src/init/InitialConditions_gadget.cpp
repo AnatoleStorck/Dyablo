@@ -312,7 +312,7 @@ public:
     int level_max = data.level_max;
 
     // auto& analytical_formula = this->analytical_formula;
-    std::vector<dyablo::UserData_fields::FieldAccessor_FieldInfo> fields_info = {
+    std::vector<dyablo::UserData::FieldAccessor_FieldInfo> fields_info = {
         {"rho", 0 },
         {"rho_vx", 1},
         {"rho_vy", 2},
