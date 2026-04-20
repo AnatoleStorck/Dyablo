@@ -91,8 +91,9 @@ public:
         return (obj_info.type == H5O_TYPE_DATASET);
     }
 
-    template< typename View_t, std::enable_if_t<Kokkos::is_view_v<View_t>> >
-    View_t read_attr( const std::string& varpath, const std::string& attrname )
+    template< typename View_t >
+    std::enable_if_t<Kokkos::is_view_v<View_t>, View_t>
+    read_attr( const std::string& varpath, const std::string& attrname )
     {
         static_assert(std::is_same_v<typename View_t::array_layout, Kokkos::LayoutRight> || (View_t::rank == 1), "View is not LayoutRight or 1D");
         static_assert(View_t::rank <= 3, "Only rank 1, 2 and 3 views are supported");
@@ -136,7 +137,8 @@ public:
     }
 
     template< typename T, size_t N >
-    std::array<T, N> read_attr(const std::string& varpath, const std::string& attrname)
+    std::enable_if_t<!Kokkos::is_view_v<T>, std::array<T, N>>
+    read_attr(const std::string& varpath, const std::string& attrname)
     {
         static_assert(N>0, "Array size must be greater than 0");
 
@@ -168,7 +170,8 @@ public:
 
     // Read attribute for scalar types
     template< typename T >
-    T read_attr(const std::string& varpath, const std::string& attrname)
+    std::enable_if_t<!Kokkos::is_view_v<T>, T>
+    read_attr(const std::string& varpath, const std::string& attrname)
     {
         return read_attr<T, 1>(varpath, attrname)[0];
     }
