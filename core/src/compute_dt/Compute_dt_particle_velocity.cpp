@@ -44,8 +44,8 @@ public:
     };
     
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
-    const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( "particles" );
-    UserData::ParticleAccessor Pdata = U.getParticleAccessor( "particles", {{"vx", IVX},{"vy", IVY},{"vz", IVZ}} );
+    const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( "dark_matter" );
+    UserData::ParticleAccessor Pdata = U.getParticleAccessor( "dark_matter", {{"vx", IVX},{"vy", IVY},{"vz", IVZ}} );
 
     constexpr real_t small_v = 1.0e-10;
     using pos_t = Kokkos::Array<real_t, 3>;
