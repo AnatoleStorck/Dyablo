@@ -411,7 +411,15 @@ public:
         double Z = (12*nC + 16*nO) / (nH + 4*nHe + 12*nC + 16*nO);
         metallicity = Z;
 
+        // T_over_mu = 1e4;
+
+
+        // We don't yet want the gas to cool below 1e4 K
+        if (constant_temperature) {
+          if (T_over_mu < 1e4) {
         T_over_mu = 1e4;
+          }
+        }
 
         rtz_solver.solve_chemistry_and_cooling(
           T_over_mu,
