@@ -166,8 +166,9 @@ public:
   PrimState consToPrim( const ConsState& U ) const
   {
     PrimState Q = { BasePolicy::consToPrim( U ) };
+    const real_t inv_rho = U.rho != 0 ? 1.0 / U.rho : 0.0;
     for (int i=0; i < nscalars; ++i)
-      Q.rho_scalar[i] = U.rho_scalar[i];
+      Q.rho_scalar[i] = U.rho_scalar[i] * inv_rho;
     return Q;
   }
 
@@ -176,7 +177,7 @@ public:
   {
     ConsState U = {BasePolicy::primToCons( Q )};
     for (int i=0; i < nscalars; ++i)
-      U.rho_scalar[i] = Q.rho_scalar[i];
+      U.rho_scalar[i] = Q.rho_scalar[i] * Q.rho;
     return U;
   }
 
