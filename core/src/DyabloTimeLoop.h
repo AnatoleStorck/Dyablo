@@ -898,8 +898,28 @@ public:
       if ( thermal_conduction_updater )
         thermal_conduction_updater->update( U, m_scalar_data );
 
+      // Renaming passive scalars before source update to have the correct names in the source updater kernels
+      if (n_passive_scalars > 0) {
+        for (int i=0; i < n_passive_scalars; ++i) {
+          std::ostringstream oss;
+          oss << "rho_scalar_" << i << "_next";
+          U.move_field(passive_scalars_names[i], oss.str());
+        }
+      }
+
+      printf("Updating source terms...\n");
       for (auto &source_updater : source_updaters)
         source_updater->update( U, m_scalar_data );
+      printf("Source terms updated.\n");
+
+      // Moving back passive scalars after source update
+      if (n_passive_scalars > 0) {
+        for (int i=0; i < n_passive_scalars; ++i) {
+          std::ostringstream oss;
+          oss << "rho_scalar_" << i << "_next";
+          U.move_field(oss.str(), passive_scalars_names[i]);
+        }
+      }
 
       U.move_field( "rho", "rho_next" );
       U.move_field( "e_tot", "e_tot_next" );
