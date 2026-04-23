@@ -125,6 +125,7 @@ namespace PRISM {
       std::vector<double>& E_max
   ) {
       DYABLO_ASSERT_HOST_RELEASE(n_groups > 0, "n_groups must be > 0");
+      DYABLO_ASSERT_HOST_RELEASE(n_groups == N_GROUPS, "n_groups must be equal to N_GROUPS");
       DYABLO_ASSERT_HOST_RELEASE(rt_groups_lower.size() == static_cast<size_t>(n_groups), "rt_groups_lower size must be equal to n_groups");
       DYABLO_ASSERT_HOST_RELEASE(rt_groups_upper.size() == static_cast<size_t>(n_groups), "rt_groups_upper size must be equal to n_groups");
 
@@ -182,6 +183,9 @@ private:
 
   std::vector<double> E_min;
   std::vector<double> E_max;
+
+  real_t c_rad;
+  real_t c_tilde;
 
   real_t T_blackbody;
 
