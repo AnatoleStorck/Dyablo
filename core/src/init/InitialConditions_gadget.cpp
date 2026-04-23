@@ -339,7 +339,7 @@ public:
             {"vy", IVY},
             {"vz", IVZ},
             {"mass", IMASS},
-            {"rho", IRHO_PART},
+            // {"rho", IRHO_PART},
             // {"metal", IMETAL_PART},
             {"hsml", IHSML},
             {"u", IINTERNAL_ENERGY} } );
