@@ -234,13 +234,19 @@ public:
   {
     timers.get("Init").start();
 
+    std::vector<std::string> initial_conditions_ids = configMap.getValue<std::vector<std::string>>("run", "initial_conditions");
+    bool has_restart_ic =
+      initial_conditions_ids.end() != std::find(initial_conditions_ids.begin(), initial_conditions_ids.end(), "restart") ||
+      initial_conditions_ids.end() != std::find(initial_conditions_ids.begin(), initial_conditions_ids.end(), "tiled_restart");
+
     // Passive scalars
     // Needs to be first so that n_passive_scalars is defined for the policies
     passive_scalars_names = configMap.getValue<std::vector<std::string>>("run", "passive_scalars_names", {});
     n_passive_scalars = configMap.getValue<int>("run", "n_passive_scalars", passive_scalars_names.size());
-    if (n_passive_scalars > 0) {
+    if( !has_restart_ic && n_passive_scalars > 0 )
+    {
       std::set<std::string> field_names;
-      for (auto &name: passive_scalars_names)
+      for( const auto& name : passive_scalars_names )
         field_names.insert(name);
       U.new_fields(field_names);
     }
@@ -255,8 +261,6 @@ public:
 
 
     timers.get("initial_conditions").start();
-    // Get initial conditions ids
-    std::vector<std::string> initial_conditions_ids = configMap.getValue<std::vector<std::string>>("run", "initial_conditions");
     // Initialize cells
     {
       // Handle legacy run/restart_enabled option
