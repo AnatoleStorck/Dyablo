@@ -503,7 +503,7 @@ public:
         std::cout << " " << f << std::endl;
       
       // Once all passive scalars have been initialized we transfer the arrays to the hydro passive scalars
-      for (int i=0; i < std::min(n_passive_scalars, 3); ++i) {
+      for (int i=0; i < std::min(n_passive_scalars, 4); ++i) {
         std::ostringstream oss;
         oss << "rho_scalar_" << i;
         U.move_field(oss.str(), passive_scalars_names[i]);
@@ -871,7 +871,7 @@ public:
     if( godunov_updater )
     {
       U.new_fields({"rho_next", "e_tot_next", "rho_vx_next", "rho_vy_next", "rho_vz_next"});    
-      U.new_fields({"rho_scalar_0_next", "rho_scalar_1_next", "rho_scalar_2_next"});
+      U.new_fields({"rho_scalar_0_next", "rho_scalar_1_next", "rho_scalar_2_next", "rho_scalar_3_next"});
 
       // TODO automatic new fields according to kernel
       if( this->has_mhd ) {
@@ -934,6 +934,7 @@ public:
       U.move_field( "rho_scalar_0", "rho_scalar_0_next" );
       U.move_field( "rho_scalar_1", "rho_scalar_1_next" );
       U.move_field( "rho_scalar_2", "rho_scalar_2_next" );
+      U.move_field( "rho_scalar_3", "rho_scalar_3_next" );
       if( this->has_mhd )
       {
         U.move_field( "Bx", "Bx_next" );
