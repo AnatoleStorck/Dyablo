@@ -801,6 +801,11 @@ public:
       fields_to_exchange.push_back("rho_vx");
       fields_to_exchange.push_back("rho_vy");
       fields_to_exchange.push_back("rho_vz");
+      for (int i=0; i < n_passive_scalars; ++i) {
+        std::ostringstream oss;
+        oss << "rho_scalar_" << i;
+        fields_to_exchange.push_back(oss.str());
+      }
     }
     if( this->has_mhd )
     {
