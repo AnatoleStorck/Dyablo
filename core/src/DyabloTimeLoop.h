@@ -871,7 +871,13 @@ public:
     if( godunov_updater )
     {
       U.new_fields({"rho_next", "e_tot_next", "rho_vx_next", "rho_vy_next", "rho_vz_next"});    
-      U.new_fields({"rho_scalar_0_next", "rho_scalar_1_next", "rho_scalar_2_next", "rho_scalar_3_next"});
+      if (n_passive_scalars > 0) {
+        std::set<std::string> scalar_next_fields;
+        for (int i=0; i < n_passive_scalars; ++i) {
+          scalar_next_fields.insert("rho_scalar_" + std::to_string(i) + "_next");
+        }
+        U.new_fields(scalar_next_fields);
+      }
 
       // TODO automatic new fields according to kernel
       if( this->has_mhd ) {
@@ -931,10 +937,17 @@ public:
       U.move_field( "rho_vx", "rho_vx_next" );
       U.move_field( "rho_vy", "rho_vy_next" );
       U.move_field( "rho_vz", "rho_vz_next" );
-      U.move_field( "rho_scalar_0", "rho_scalar_0_next" );
-      U.move_field( "rho_scalar_1", "rho_scalar_1_next" );
-      U.move_field( "rho_scalar_2", "rho_scalar_2_next" );
-      U.move_field( "rho_scalar_3", "rho_scalar_3_next" );
+
+      for (int i=0; i < n_passive_scalars; ++i) {
+        std::ostringstream oss;
+        oss << "rho_scalar_" << i;
+        U.move_field(oss.str(), oss.str() + "_next");
+      }
+
+      // U.move_field( "rho_scalar_0", "rho_scalar_0_next" );
+      // U.move_field( "rho_scalar_1", "rho_scalar_1_next" );
+      // U.move_field( "rho_scalar_2", "rho_scalar_2_next" );
+      // U.move_field( "rho_scalar_3", "rho_scalar_3_next" );
       if( this->has_mhd )
       {
         U.move_field( "Bx", "Bx_next" );
