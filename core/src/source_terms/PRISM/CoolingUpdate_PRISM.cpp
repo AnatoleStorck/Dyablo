@@ -369,12 +369,12 @@ public:
 
         for (int i = 1; i < MAX_ELEMENTS; ++i) {
           if (ions2passive[i] == -1) continue; // Skip elements not in network
-          // Set element number density
-          n_and_ion_fracs_loc.n_element[i] = Uin_passive.at(iCell, elems2passive[i]) / u.rho;
+          // Element channels are transported as conserved number densities n_i.
+          n_and_ion_fracs_loc.n_element[i] = Uin_passive.at(iCell, elems2passive[i]);
           // Set ion fractions
           for (int j = 0; j < nions_and_molecules[i]; ++j) {
             int index = ions2passive[i] + j;
-            n_and_ion_fracs_loc[i].ion_fracs[j] = Uin_passive.at(iCell, index);
+            n_and_ion_fracs_loc[i].ion_fracs[j] = Uin_passive.at(iCell, index) / u.rho;
           }
         }
 
@@ -444,10 +444,10 @@ public:
         // Write back element number densities and ion fractions
         for (int i = 1; i < MAX_ELEMENTS; ++i) {
           if (ions2passive[i] == -1) continue; // Skip elements not in network
-          Uout_passive.at(iCell, elems2passive[i]) = n_and_ion_fracs_loc.n_element[i] * u.rho;
+          Uout_passive.at(iCell, elems2passive[i]) = n_and_ion_fracs_loc.n_element[i];
           for (int j = 0; j < nions_and_molecules[i]; ++j) {
             int index = ions2passive[i] + j;
-            Uout_passive.at(iCell, index) = n_and_ion_fracs_loc[i].ion_fracs[j];
+            Uout_passive.at(iCell, index) = n_and_ion_fracs_loc[i].ion_fracs[j] * u.rho;
           }
         }
 

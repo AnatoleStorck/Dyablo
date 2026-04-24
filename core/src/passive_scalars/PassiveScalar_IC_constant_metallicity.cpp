@@ -12,6 +12,8 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
   const real_t metallicity;
   const std::vector<std::string> metals;
   const std::vector<real_t> metal_mass;
+  const std::vector<std::string> ions;
+  const std::vector<real_t> ion_fracs;
 
   PassiveScalar_IC_constant_metallicity(  
         ConfigMap& configMap,
@@ -23,7 +25,8 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
     metallicity(configMap.getValue<real_t>("constant_metallicity", "metallicity", 0.0)),
     metals(configMap.getValue<std::vector<std::string>>("constant_metallicity", "metals", std::vector<std::string>{})),
     metal_mass(configMap.getValue<std::vector<real_t>>("constant_metallicity", "metal_mass", std::vector<real_t>{})),
-    ions(configMap.getValue<std::vector<std::string>>("cooling", "ions" ))
+    ions(configMap.getValue<std::vector<std::string>>("constant_metallicity", "ions", std::vector<std::string>{})),
+    ion_fracs(configMap.getValue<std::vector<real_t>>("constant_metallicity", "ion_fracs", std::vector<real_t>{}))
   {
   }
 
@@ -31,26 +34,38 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
 
     DYABLO_ASSERT_HOST_RELEASE( metals.size() == metal_mass.size(), "PassiveScalar_IC_constant_metallicity : Mismatch between number of metals and metal masses" );
 
-    std::vector<UserData::FieldAccessor::FieldInfo> new_fields_info;
-    std::set<std::string> new_fields;
+    std::vector<UserData::FieldAccessor::FieldInfo> new_metal_fields_info;
+    std::set<std::string> new_metal_fields;
     for( const std::string& metal : metals )
     {
         // add the number density field for the metal
         std::string field = "n" + metal;
 
-        new_fields.insert(field); 
-        VarIndex ivar = new_fields_info.size();
-        new_fields_info.push_back({field, ivar});
+        new_metal_fields.insert(field);
+        VarIndex ivar = new_metal_fields_info.size();
+        new_metal_fields_info.push_back({field, ivar});
     }
-    //U.new_fields( new_fields ); 
 
+    std::vector<UserData::FieldAccessor::FieldInfo> new_ion_fields_info;
+    std::set<std::string> new_ion_fields;
+    for( const std::string& ion : ions )
+    {
+        // add the ion fraction field for the metal
+        std::string field = ion;
+
+        new_ion_fields.insert(field);
+        VarIndex ivar = new_ion_fields_info.size();
+        new_ion_fields_info.push_back({field, ivar});
+    }
 
     std::vector<dyablo::UserData::FieldAccessor_FieldInfo> fields_info = {
         {"rho", 0 }
     };
 
-    auto Uin  = U.getAccessor( fields_info );
-    auto Uout = U.getAccessor( new_fields_info );
+
+    auto Umetal = U.getAccessor( new_metal_fields_info );
+    auto Uion   = U.getAccessor( new_ion_fields_info );
+    auto Urho   = U.getAccessor( fields_info );
 
     const real_t X = 0.76;
     const real_t Y = 0.24;
@@ -90,13 +105,14 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
     foreach_cell.foreach_cell( "PassiveScalar_IC_constant_metallicity::fill_U", U.getShape(),
                 KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell_U )
     {
-
-        const real_t rho = Uin.at(iCell_U, 0);
+        const real_t rho = Urho.at(iCell_U, 0);
 
         for( size_t i=0; i<coeff_view.size(); i++ )
-        {
-            Uout.at(iCell_U, i) = ((rho * code_density).convert_to(amu_per_cc) * coeff_view(i)) * rho * (number_density * code_density);
-        };
+            // Store conserved element number density n_i so hydro transports n_i with mass flux.
+            Umetal.at(iCell_U, i) = (rho * code_density).convert_to(amu_per_cc) * coeff_view(i);
+
+        for( size_t i=0; i<ions.size(); i++ )
+            Uion.at(iCell_U, i) = ion_fracs[i] * rho;
     });
   }
 };
