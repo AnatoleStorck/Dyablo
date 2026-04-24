@@ -482,20 +482,27 @@ public:
     std::vector<std::string> passive_scalars_ids = configMap.getValue<std::vector<std::string>>("run", "passive_scalars_init", {});
     // Initialize cells
     {
-      int passive_id = 0;
-      for( std::string init_name : passive_scalars_ids )
+      if( !has_restart_ic )
       {
-        if (init_name == "none")
-          continue;
-        std::unique_ptr<PassiveScalar_IC> passive_scalar_ic =
-          PassiveScalar_IC_Factory::make_instance(init_name, 
-            configMap,
-            m_foreach_cell,
-            timers,
-            passive_scalars_names[passive_id]);
-        passive_scalar_ic->init( U );
-        passive_id++;
-      }  
+        int passive_id = 0;
+        for( std::string init_name : passive_scalars_ids )
+        {
+          if (init_name == "none")
+            continue;
+          std::unique_ptr<PassiveScalar_IC> passive_scalar_ic =
+            PassiveScalar_IC_Factory::make_instance(init_name, 
+              configMap,
+              m_foreach_cell,
+              timers,
+              passive_scalars_names[passive_id]);
+          passive_scalar_ic->init( U );
+          passive_id++;
+        }
+      }
+      else
+      {
+        std::cout << "Restart detected: skipping passive scalar re-initialization" << std::endl;
+      }
 
       auto fields = U.getEnabledFields();
       std::cout << "Enabled fields : " << std::endl;
@@ -503,7 +510,7 @@ public:
         std::cout << " " << f << std::endl;
       
       // Once all passive scalars have been initialized we transfer the arrays to the hydro passive scalars
-      for (int i=0; i < std::min(n_passive_scalars, 4); ++i) {
+      for (int i=0; i < n_passive_scalars; ++i) {
         std::ostringstream oss;
         oss << "rho_scalar_" << i;
         U.move_field(oss.str(), passive_scalars_names[i]);
@@ -918,10 +925,8 @@ public:
         }
       }
 
-      printf("Updating source terms...\n");
       for (auto &source_updater : source_updaters)
         source_updater->update( U, m_scalar_data );
-      printf("Source terms updated.\n");
 
       // Moving back passive scalars after source update
       if (n_passive_scalars > 0) {
