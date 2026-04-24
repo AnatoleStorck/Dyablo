@@ -47,7 +47,7 @@ set (Kokkos_ENABLE_CUDA_CONSTEXPR ${Kokkos_ENABLE_CUDA} CACHE BOOL "Enable use o
 set (BUILD_SHARED_LIBS ON)
 
 # Use CMAKE_DL_LIBS to find the dl library
-set( LIBDL_LIBRARY CACHE STRING "LIBDL library" "${CMAKE_DL_LIBS}" )
+set( LIBDL_LIBRARY "${CMAKE_DL_LIBS}" CACHE STRING "LIBDL library" )
 
 #####################################################################
 # Kokkos
