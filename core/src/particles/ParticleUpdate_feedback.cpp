@@ -108,9 +108,13 @@ public:
     const auto code_time = Units::code_units().getUnit<Units::Time>();
     const auto code_mass = Units::code_units().getUnit<Units::Mass>();
 
+    real_t dt_phys_yr = Units::supercomoving_to_physical<Units::Time>(
+      (dt * code_time).convert_to(Units::yr()),
+      aexp
+    );
+
     // Gather SN feedback parameters
     const real_t E_SNII = Units::physical_to_supercomoving<Units::Energy>(E_SNII_physical, aexp);
-    const real_t dt_physical = Units::supercomoving_to_physical<Units::Time>(dt, aexp);
 
     Kokkos::View<int> N_supernovae_view("N_supernovae");
     Kokkos::deep_copy(N_supernovae_view, 0);
@@ -136,7 +140,7 @@ public:
 
       // get upper and lower mass limits of stars that die in current timestep based on Raiteri et al. (1996)
       real_t M1 = timedelay_SNII::raiteri_ms_mass(part_age_phys_yr, temp_metallicity);
-      real_t M2 = timedelay_SNII::raiteri_ms_mass(part_age_phys_yr + dt_physical, temp_metallicity);
+      real_t M2 = timedelay_SNII::raiteri_ms_mass(part_age_phys_yr + dt_phys_yr, temp_metallicity);
 
       // If the entire mass range is outside the SNII progenitor mass range, skip
       if (M1 < 8.0 || M2 > 40.0) return;
