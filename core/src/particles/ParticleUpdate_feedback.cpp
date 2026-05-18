@@ -107,6 +107,9 @@ public:
 
     real_t aexp = scalar_data.get<real_t>("aexp");
 
+    const auto code_time = Units::code_units().getUnit<Units::Time>();
+    const auto code_mass = Units::code_units().getUnit<Units::Mass>();
+
     // Gather SN feedback parameters
     const real_t eta_SNII = this->eta_SNII;
     const real_t yield_SNII = this->yield_SNII;
@@ -125,17 +128,21 @@ public:
       KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
     {
       // Age of the particle
-      real_t age_physical = t - Pdata.at(iPart, IBIRTH);
-
-
+      real_t part_age_phys_yr = Units::supercomoving_to_physical<Units::Time>(
+        ((t - Pdata.at(iPart, IBIRTH)) * code_time).convert_to(Units::yr()),
+        aexp
+      );
+      if (part_age_phys_yr <= 0) // decide whether this is actually needed
+        return;
 
       // get mass of stars that leave MS in current time step based on
       // Raiteri et al. 1996 and assuming a Salpeter IMF.
       // Check if M1-M2 mass range is within CCSN progenitor mass range (8-40 solar masses)
       real_t temp_metallicity = metallicity_uniform;
 
-      real_t M1 = timedelay_SNII::raiteri_ms_mass(age_physical, temp_metallicity);
-      real_t M2 = timedelay_SNII::raiteri_ms_mass(age_physical + dt_physical, temp_metallicity);
+      // get upper and lower mass limits of stars that die in current timestep based on Raiteri et al. (1996)
+      real_t M1 = timedelay_SNII::raiteri_ms_mass(part_age_phys_yr, temp_metallicity);
+      real_t M2 = timedelay_SNII::raiteri_ms_mass(part_age_phys_yr + dt_physical, temp_metallicity);
 
       // If the entire mass range is outside the SNII progenitor mass range, skip
       if (M2 < 8.0 || M1 > 40.0)
@@ -143,9 +150,11 @@ public:
       M1 = std::max(M1, 8.0);
       M2 = std::min(M2, 40.0);
 
-      real_t part_imass = Pdata.at(iPart, IBIRTHMASS);
-
-      real_t num = part_imass * timedelay_SNII::kroupa_imf(M1, M2);
+      // Particle mass in solar masses
+      real_t part_mass_phys_Msun = Units::supercomoving_to_physical<Units::Mass>(
+        (Pdata.at(iPart, IMASS) * code_mass).convert_to(Units::solar_mass()),
+        aexp
+      );
       real_t num_residual = num - int(num);
       num = int(num);
 
@@ -160,7 +169,10 @@ public:
       // If we have a SNII explosion
       if ( num > 0 ) {
 
-        real_t meanmass = 0.5 * (M1 + M2); // don't need to compute mean mass until here
+        real_t meanmass = Units::physical_to_supercomoving<Units::Mass>(
+          (0.5 * (M1 + M2) * Units::solar_mass()).convert_to(code_mass),
+          aexp
+        );
         real_t Mloss = num * meanmass;
 
         pos_t part_pos = {Ppos.pos(iPart, IX), Ppos.pos(iPart, IY), Ppos.pos(iPart, IZ)};
