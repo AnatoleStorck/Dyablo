@@ -871,7 +871,7 @@ public:
     if( particle_position_updater )
     {
       particle_position_updater->update( U, m_scalar_data );
-      U.distributeParticles("dark_matter");
+      U.distributeParticles("particles");
     }
 
     // Update hydro
