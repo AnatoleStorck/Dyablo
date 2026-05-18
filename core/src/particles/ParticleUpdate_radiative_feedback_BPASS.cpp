@@ -284,7 +284,7 @@ public:
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
-    const real_t dt_physical = Units::supercomoving_to_physical<Units::Time>(
+    const real_t dt_phys_s = Units::supercomoving_to_physical<Units::Time>(
       (dt * Units::code_units().getUnit<Units::Time>()).convert_to(Units::s()),
       aexp
     );
@@ -375,7 +375,7 @@ public:
         // Atomic: multiple particles can land in the same cell
         Kokkos::atomic_add(
           &Uout.at(iCell, g),
-          photons_per_s * dt_physical / cell_volume_physical
+          photons_per_s * dt_phys_s / cell_volume_physical
         );
       }
     });
