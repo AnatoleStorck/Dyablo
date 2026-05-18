@@ -202,18 +202,21 @@ public:
     U.new_ParticleAttribute("spawned_particles", "vy");
     U.new_ParticleAttribute("spawned_particles", "vz");
     U.new_ParticleAttribute("spawned_particles", "birth_time");
+    U.new_ParticleAttribute("spawned_particles", "id");
     U.new_ParticleAttribute("spawned_particles", "metallicity");
 
     { // scope guard important to avoid keeping references to "spawned_particles" array
       enum VarIndex_particle{
-        IMASS, IVX, IVY, IVZ, IBIRTH_TIME, IMETALLICITY
+        IMASS, IBIRTHMASS, IVX, IVY, IVZ, IBIRTH_TIME, IID, IMETALLICITY
       };
       UserData::ParticleAccessor Pnew_data = U.getParticleAccessor( "spawned_particles", {
         {"mass", IMASS},
+        {"birth_mass", IBIRTHMASS},
         {"vx", IVX},
         {"vy", IVY},
         {"vz", IVZ},
         {"birth_time", IBIRTH_TIME},
+        {"id", IID},
         {"metallicity", IMETALLICITY}
       } );
 
@@ -264,6 +267,8 @@ public:
         }
 
         Pnew_data.at(iPart, IMASS) = Mparticle;
+        Pnew_data.at(iPart, IBIRTHMASS) = Mparticle;
+        Pnew_data.at(iPart, IID) = iPart; // assign unique id based on particle index in this array (is this right?)
         if (has_metallicity) {
           real_t Zcell = UinZ.at_ivar(iCell, 0) / q.rho;
           Pnew_data.at(iPart, IMETALLICITY) = Zcell;
