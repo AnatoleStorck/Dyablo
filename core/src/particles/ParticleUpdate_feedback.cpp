@@ -180,7 +180,7 @@ public:
 
         real_t rho_loss = Mloss / cell_volume;
 
-        real_t ethermal = rho_loss * E_SNII * num;
+        real_t ethermal = E_SNII * num / cell_volume;
         real_t ekin = 0.5 * rho_loss * (
           SQR(part_vel[IX]) + SQR(part_vel[IY]) + SQR(part_vel[IZ])
         );
