@@ -141,11 +141,11 @@ namespace PRISM {
 }
 
 namespace dyablo {
-constexpr bool constant_temperature = true;
+constexpr bool constant_temperature = false;
 constexpr bool include_H2 = false;
 constexpr bool include_CO = false;
 constexpr bool rt_advect = true;
-constexpr bool include_self_shielding = false;
+constexpr bool include_self_shielding = true;
 
 using RTZ_type = RTZ<constant_temperature,include_H2,include_CO,rt_advect,include_self_shielding>;
 /**
@@ -190,6 +190,8 @@ private:
   real_t T_blackbody;
 
   RTZ_type rtz_solver;
+
+  bool relax;
 
 public:
   using PrimState = typename Policy::PrimState;
@@ -238,6 +240,9 @@ public:
     timers.get("CoolingUpdate_PRISM:cross_section").start();
     rtz_solver.need_to_update_cross_sections(T_blackbody);
     timers.get("CoolingUpdate_PRISM:cross_section").stop();
+
+    // If in relaxation mode
+    relax             = configMap.getValue<bool>("cooling", "relaxing", false);
   };
 
   void update( UserData &U,
@@ -326,7 +331,7 @@ public:
     const std::array<int, MAX_ELEMENTS> &nions_and_molecules = this->nions_and_molecules;
     const std::array<int, MAX_ELEMENTS> &elems2passive = this->elems2passive;
     const std::array<int, MAX_ELEMENTS> &ions2passive = this->ions2passive;
-    const int n_groups = this->n_groups;
+    // const int n_groups = this->n_groups;
     const RTZ_type& rtz_solver = this->rtz_solver;
 
     timers.get("CoolingUpdate_PRISM").start();
@@ -417,14 +422,6 @@ public:
 
         // T_over_mu = 1e4;
 
-
-        // We don't yet want the gas to cool below 1e4 K
-        if (constant_temperature) {
-          if (T_over_mu < 1e4) {
-        T_over_mu = 1e4;
-          }
-        }
-
         rtz_solver.solve_chemistry_and_cooling(
           T_over_mu,
           metallicity,
@@ -440,6 +437,13 @@ public:
           40'000,
           flags
         );
+
+        // We don't yet want the gas to cool below 1e4 K
+        if (relax) {
+          if (out_T_over_mu < 1e4) {
+        out_T_over_mu = 1e4;
+          }
+        }
 
         // Write back element number densities and ion fractions
         for (int i = 1; i < MAX_ELEMENTS; ++i) {
