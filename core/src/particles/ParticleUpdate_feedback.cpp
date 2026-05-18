@@ -61,8 +61,6 @@ public:
   : foreach_cell    ( foreach_cell ),
     foreach_particle( foreach_cell.get_amr_mesh(), configMap ),
     timers          ( timers ),
-    eta_SNII        ( configMap.getValue<real_t>("star_feedback", "eta_SNII", 0.1) ),
-    yield_SNII      ( configMap.getValue<real_t>("star_feedback", "yield_SNII", 0.1) ),
     E_SNII_physical ( configMap.getValue_in_code_unit<Units::Energy>("star_feedback", "E_SNII", "1e51 erg") ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ),
     // meant to be temporary until we have proper metallicity evolution and SNII yields
@@ -111,12 +109,7 @@ public:
     const auto code_mass = Units::code_units().getUnit<Units::Mass>();
 
     // Gather SN feedback parameters
-    const real_t eta_SNII = this->eta_SNII;
-    const real_t yield_SNII = this->yield_SNII;
     const real_t E_SNII = Units::physical_to_supercomoving<Units::Energy>(E_SNII_physical, aexp);
-    const real_t M_SNII = Units::physical_to_supercomoving<Units::Mass>(M_SNII_physical, aexp);
-    const real_t E_per_M_SNII = E_SNII / M_SNII;
-    const real_t t_SNII_physical = this->t_SNII_physical;
     const real_t dt_physical = Units::supercomoving_to_physical<Units::Time>(dt, aexp);
 
     Kokkos::View<int> N_supernovae_view("N_supernovae");
@@ -185,7 +178,8 @@ public:
         real_t cell_volume = cell_size[IX] * cell_size[IY] * cell_size[IZ];
 
         real_t rho_loss = Mloss / cell_volume;
-        real_t ethermal = Mloss * E_per_M_SNII;
+
+        real_t ethermal = rho_loss * E_SNII * num;
         real_t ekin = 0.5 * rho_loss * (
           SQR(part_vel[IX]) + SQR(part_vel[IY]) + SQR(part_vel[IZ])
         );
@@ -204,48 +198,8 @@ public:
         // Update particle properties
         Pdata.at(iPart, IMASS) -= Mloss;
 
-        Kokkos::atomic_add(&N_supernovae_view(), num);
-
+        Kokkos::atomic_add(&N_supernovae_view(), int(num));
       }
-
-
-      // If the SN will explode in this time step
-      // if ((age_physical < t_SNII_physical) & ((age_physical + dt_physical) > t_SNII_physical)) {
-      //   pos_t part_pos = {Ppos.pos(iPart, IX), Ppos.pos(iPart, IY), Ppos.pos(iPart, IZ)};
-      //   pos_t part_vel = {Pdata.at(iPart, IVX), Pdata.at(iPart, IVY), Pdata.at(iPart, IVZ)};
-
-      //   ForeachCell::CellIndex iCell = cells.getCellFromPos( part_pos );
-
-      //   pos_t cell_size = cells.getCellSize( iCell );
-      //   real_t cell_volume = cell_size[IX] * cell_size[IY] * cell_size[IZ];
-
-      //   // Compute ejecta mass, thermal energy + kinetic energy
-      //   real_t Mstar = Pdata.at(iPart, IMASS);
-      //   real_t Mloss = Mstar * eta_SNII;
-      //   real_t rho_loss = Mloss / cell_volume;
-
-      //   real_t ethermal = E_per_M_SNII * rho_loss;
-      //   real_t ekin = 0.5 * rho_loss * (
-      //     SQR(part_vel[IX]) + SQR(part_vel[IY]) + SQR(part_vel[IZ])
-      //   );
-
-      //   // Atomic are mandatory since multiple particles can explode in the same cell
-      //   Kokkos::atomic_add(&Uin.at(iCell, IRho), rho_loss);
-      //   Kokkos::atomic_add(&Uin.at(iCell, IE_tot), ethermal + ekin);
-      //   Kokkos::atomic_add(&Uin.at(iCell, IRho_vx), rho_loss * part_vel[IX]);
-      //   Kokkos::atomic_add(&Uin.at(iCell, IRho_vy), rho_loss * part_vel[IY]);
-      //   Kokkos::atomic_add(&Uin.at(iCell, IRho_vz), rho_loss * part_vel[IZ]);
-      //   if (has_metallicity) {
-      //     real_t Z_loss = yield_SNII + (1 - yield_SNII) * Pdata.at(iPart, IMETAL);
-      //     Kokkos::atomic_add(&Uin.at(iCell, IRho_Z), rho_loss * Z_loss);
-      //   }
-
-      //   // Update particle properties
-      //   Pdata.at(iPart, IMASS) -= Mloss;
-
-      //   Kokkos::atomic_add(&N_supernovae_view(), 1);
-
-      // }
     });
 
     int N_supernovae = 0;
@@ -265,8 +219,6 @@ private:
   real_t metallicity_uniform;
 
   real_t E_SNII_physical;
-  real_t M_SNII_physical;
-  real_t t_SNII_physical;
 
   bool cosmology;
 };
