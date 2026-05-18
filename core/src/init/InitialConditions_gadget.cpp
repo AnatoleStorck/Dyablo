@@ -1,4 +1,5 @@
 #include "InitialConditions_base.h"
+#include "ScalarSimulationData.h"
 #include "../hyperbolic/policy/HyperbolicPolicy_Hydro.h"
 #include "../utils/io/HDF5ViewReader.h"
 #include "refine_condition/RefineCondition.h"
@@ -55,7 +56,7 @@ struct GadgetHeader
     GadgetHeader () = default;
 };
 
-enum VarIndex_particle_gadget { IVX, IVY, IVZ, IMASS, IID, IRHO_PART, IMETAL_PART, IHSML, IINTERNAL_ENERGY };
+enum VarIndex_particle_gadget { IVX, IVY, IVZ, IMASS, IBIRTHMASS, IBIRTH, IID, IRHO_PART, IMETAL_PART, IHSML, IINTERNAL_ENERGY };
 enum VarIndex_hydro { IRho, IRho_vx, IRho_vy, IRho_vz, IE_tot };
 
 class InitialConditions_gadget : public InitialConditions
@@ -85,6 +86,7 @@ class InitialConditions_gadget : public InitialConditions
     GadgetHeader header;
 
     real_t smallr, smallp;
+    bool cosmology;
 
 public:
   InitialConditions_gadget(
@@ -111,7 +113,8 @@ public:
     hdf5_reader( filename ),
     header ( hdf5_reader ),
     smallr(configMap.getValue<real_t>("hydro", "smallr", 1e-10)),
-    smallp(configMap.getValue<real_t>("hydro", "smallp", 1e-10))
+    smallp(configMap.getValue<real_t>("hydro", "smallp", 1e-10)),
+    cosmology( configMap.getValue<bool>("cosmology", "active", false))
   {
     real_t h0 = header.h0;
     auto box_size = header.BoxSize * Units::kpc() / h0;
@@ -159,12 +162,12 @@ public:
     set_or_check("cosmology", "H0", header.h0 * 100);
   }
 
-  void read_particles ( UserData& U ) {
+  void read_particles ( UserData& U, ScalarSimulationData& scalar_data ) {
     auto _read = [&]( const int itype, const std::string& gadget_part_name, const std::string& part_name ) {
         if (header.Flag_DoublePrecision)
-            read_particles_helper<double>(U, header, hdf5_reader, itype, gadget_part_name, part_name);
+            read_particles_helper<double>(U, scalar_data, header, hdf5_reader, itype, gadget_part_name, part_name);
         else
-            read_particles_helper<float>(U, header, hdf5_reader, itype, gadget_part_name, part_name);
+            read_particles_helper<float>(U, scalar_data, header, hdf5_reader, itype, gadget_part_name, part_name);
     };
     _read(0, "PartType0", "gas");
     _read(1, "PartType1", "dark_matter");
@@ -182,11 +185,32 @@ public:
             U.merge_particles_if("star", "disk", "mass");
         }
     }
+
+    // Create new particle array
+    U.new_ParticleArray("particles", 0);
+
+    // Initialize attributes
+    U.new_ParticleAttribute("particles", "vx");
+    U.new_ParticleAttribute("particles", "vy");
+    U.new_ParticleAttribute("particles", "vz");
+    U.new_ParticleAttribute("particles", "mass");
+    U.new_ParticleAttribute("particles", "birth_mass");
+    U.new_ParticleAttribute("particles", "id");
+    U.new_ParticleAttribute("particles", "birth_time");
+
+    // put everything, including dark matter, in the "particles" array for now
+    if (U.has_ParticleArray("star")) {
+        U.merge_particles_if("particles", "star", "mass");
+    }
+    if (U.has_ParticleArray("dark_matter")) {
+        U.merge_particles_if("particles", "dark_matter", "mass");
+    }
   }
 
   template< typename T>
   void read_particles_helper(
     UserData& U,
+    ScalarSimulationData& scalar_data,
     const GadgetHeader& header, HDF5ViewReader& hdf5_reader,
     const size_t itype, const std::string& gadget_part_name, const std::string& part_name
 ) {
@@ -198,6 +222,10 @@ public:
         std::cout << "  Reading " << Npart << " particles of type " << itype << " (" << part_name << ")" << std::endl;
     }
 
+    const real_t time = cosmology ?
+      scalar_data.get<real_t>("time_physical")
+      : scalar_data.get<real_t>("time");
+
     // Create new particle array
     U.new_ParticleArray(part_name, Npart);
 
@@ -206,8 +234,9 @@ public:
     U.new_ParticleAttribute(part_name, "vy");
     U.new_ParticleAttribute(part_name, "vz");
     U.new_ParticleAttribute(part_name, "mass");
+    U.new_ParticleAttribute(part_name, "birth_mass");
     U.new_ParticleAttribute(part_name, "id");
-
+    U.new_ParticleAttribute(part_name, "birth_time");
     // Read data from file
     using Darr2D = Kokkos::View<T**, Kokkos::LayoutRight>;
 
@@ -228,6 +257,8 @@ public:
           {"vy",   IVY},
           {"vz",   IVZ},
           {"mass", IMASS},
+          {"birth_mass", IBIRTHMASS},
+          {"birth_time", IBIRTH},
           {"id",   IID} } );
 
 
@@ -248,10 +279,14 @@ public:
         Pout.at(i, IVX) = vp(i, 0) * vel_unit;
         Pout.at(i, IVY) = vp(i, 1) * vel_unit;
         Pout.at(i, IVZ) = vp(i, 2) * vel_unit;
+
+        // Assuming all particles have time of initialization as their birth time
+        Pout.at(i, IBIRTH) = time; 
         Pout.at(i, IID) = idp(i);
 
         if (header.MassTable[itype] > 0) {
             Pout.at(i, IMASS) = header.MassTable[itype] * mass_unit;
+            Pout.at(i, IBIRTHMASS) = header.MassTable[itype] * mass_unit;
         }
     });
 
@@ -297,8 +332,17 @@ public:
         });
   };
 
-  void init ( UserData& U ) {
-    this->read_particles(U);
+    void init( UserData& U ) override {
+        // Initial conditions are instantiated before the main scalar_data object
+        // is populated in DyabloTimeLoop. Seed the keys used by gadget loader.
+        ScalarSimulationData scalar_data;
+        scalar_data.set<real_t>("time", header.Time);
+        scalar_data.set<real_t>("time_physical", header.Time);
+                this->init_with_scalar_data(U, scalar_data);
+    }
+
+    void init_with_scalar_data ( UserData& U, ScalarSimulationData& scalar_data) {
+    this->read_particles(U, scalar_data);
 
     // ----------------------------------
     //  Create the AMR structure
