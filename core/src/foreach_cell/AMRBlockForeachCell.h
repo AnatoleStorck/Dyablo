@@ -228,9 +228,9 @@ public:
     return {cdata.bx, cdata.by, cdata.bz };
   }
 
-  uint32_t getNumCells() const 
+  uint64_t getNumCells() const 
   {
-    return get_amr_mesh().getNumOctants() * cdata.bx * cdata.by * cdata.bz;
+    return (uint64_t)get_amr_mesh().getNumOctants() * cdata.bx * cdata.by * cdata.bz;
   }
 
   uint64_t getNumCells_global() const 
@@ -429,8 +429,8 @@ public:
     uint32_t nbOcts = iter_space.iOct_count();
 
     Kokkos::parallel_for( kernel_name, 
-      Kokkos::RangePolicy<>(0,nbCellsPerBlock*nbOcts), 
-      KOKKOS_LAMBDA( uint32_t index )
+      (uint64_t)nbCellsPerBlock*nbOcts, 
+      KOKKOS_LAMBDA( uint64_t index )
     {
       uint32_t iOct = index/nbCellsPerBlock;
       index = index%nbCellsPerBlock;

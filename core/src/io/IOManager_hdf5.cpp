@@ -363,7 +363,7 @@ R"xml(
     // Write hdf5 file 
     auto linearize_iCell = KOKKOS_LAMBDA(const ForeachCell::CellIndex& iCell)
     {
-      return iCell.i + iCell.bx * (iCell.j + iCell.by * ( iCell.k + iCell.bz * iCell.iOct.iOct )); 
+      return iCell.i + iCell.bx * (iCell.j + iCell.by * ( iCell.k + iCell.bz * (uint64_t)iCell.iOct.iOct )); 
     };
 
     HDF5ViewWriter hdf5_writer( output_dir + "/" + base_filename + ".h5" );
@@ -484,11 +484,11 @@ R"xml(
         { 
           Kokkos::View< output_real_t*, Kokkos::LayoutLeft > tmp_view(var_name, local_num_cells);
           
-          auto field_view = U_.getField( var_name );
-          foreach_cell.foreach_cell( "compute_node_coordinates", field_view,
+          auto field_view = U_.getAccessor({{ var_name,0}} );
+          foreach_cell.foreach_cell( "compute_node_coordinates", field_view.getShape(),
           KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell )
           {
-            uint32_t iCell_lin = linearize_iCell( iCell );
+            uint64_t iCell_lin = linearize_iCell( iCell );
             tmp_view(iCell_lin) = static_cast<output_real_t>(field_view.at_ivar(iCell, 0));
           });
           hdf5_writer.collective_write( var_name, tmp_view );
