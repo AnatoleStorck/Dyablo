@@ -115,7 +115,8 @@ public:
     Kokkos::View<int> N_supernovae_view("N_supernovae");
     Kokkos::deep_copy(N_supernovae_view, 0);
 
-    Kokkos::Random_XorShift64_Pool<> random_pool(/*seed=*/12345);
+    // Random seed based on current time and timestep (good enough)
+    Kokkos::Random_XorShift64_Pool<> random_pool(/*seed=*/12345 + int(t * 1/dt));
 
     foreach_particle.foreach_particle( "particles_update_feedback", Ppos,
       KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
