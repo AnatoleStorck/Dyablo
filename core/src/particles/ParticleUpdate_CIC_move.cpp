@@ -51,8 +51,8 @@ public:
     };
 
     auto Uin = U.getAccessor( {{"gx", IGX},{"gy", IGY},{"gz", IGZ}} );
-    const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( "dark_matter" );
-    UserData::ParticleAccessor Pdata = U.getParticleAccessor( "dark_matter", {{"vx", IVX},{"vy", IVY},{"vz", IVZ}} );
+    const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( "particles" );
+    UserData::ParticleAccessor Pdata = U.getParticleAccessor( "particles", {{"vx", IVX},{"vy", IVY},{"vz", IVZ}} );
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
