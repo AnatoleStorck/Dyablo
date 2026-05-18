@@ -324,7 +324,24 @@ public:
   
   static Params getParams( ConfigMap& configMap )
   {
-    return {
+
+    if (configMap.getValue<bool>("rad", "absorbing_bc", false)) {
+      printf("Temporarely using absorbing BC for all RT boundaries.\n");
+      return {
+        .bc_min = {
+          BC_ABSORBING,
+          BC_ABSORBING,
+          BC_ABSORBING
+        },
+        .bc_max = {
+          BC_ABSORBING,
+          BC_ABSORBING,
+          BC_ABSORBING
+        }
+      };
+    }
+    else {
+      return {
       .bc_min = {
         configMap.getValue<BoundaryConditionType>("mesh","boundary_type_xmin", BC_ABSORBING),
         configMap.getValue<BoundaryConditionType>("mesh","boundary_type_ymin", BC_ABSORBING),
@@ -334,9 +351,11 @@ public:
         configMap.getValue<BoundaryConditionType>("mesh","boundary_type_xmax", BC_ABSORBING),
         configMap.getValue<BoundaryConditionType>("mesh","boundary_type_ymax", BC_ABSORBING),
         configMap.getValue<BoundaryConditionType>("mesh","boundary_type_zmax", BC_ABSORBING)
-      }
-    };
-  }
+        }
+      };
+    }
+  };
+}
 
   HyperbolicPolicy_BoundaryConditions_Rad_Default( const Params& params, const ScalarSimulationData& )
   : bc_min(params.bc_min),
