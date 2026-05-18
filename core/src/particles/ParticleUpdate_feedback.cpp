@@ -17,9 +17,9 @@ namespace timedelay_SNII {
     else if (Z > 3e-2)  Z_eff = 3e-2;
     else                Z_eff = Z;
 
-    real_t a0 = 10.13 + 0.07547 * std::log10(Z_eff) - 0.008084 * std::pow(std::log10(Z_eff), 2);
-    real_t a1 = 4.424 + 0.7939 * std::log10(Z_eff) + 0.1187 * std::pow(std::log10(Z_eff), 2);
-    real_t a2 = 1.262 + 0.3385 * std::log10(Z_eff) + 0.05417 * std::pow(std::log10(Z_eff), 2);
+    real_t a0 =  10.13 + 0.07547 * std::log10(Z_eff) - 0.008084 * std::pow(std::log10(Z_eff), 2);
+    real_t a1 = -4.424 - 0.7939  * std::log10(Z_eff) - 0.1187   * std::pow(std::log10(Z_eff), 2);
+    real_t a2 =  1.262 + 0.3385  * std::log10(Z_eff) + 0.05417  * std::pow(std::log10(Z_eff), 2);
 
     real_t c = a0 - std::log10(t);
     real_t b = a1;
@@ -29,7 +29,7 @@ namespace timedelay_SNII {
 
     real_t mass;
     if (discriminant > 0) {
-      mass = (-b + std::sqrt(discriminant)) / (2*a);
+      mass = (-b - std::sqrt(discriminant)) / (2*a);
       mass = std::pow(10, mass);
     }
     else {
@@ -145,16 +145,17 @@ public:
       real_t M2 = timedelay_SNII::raiteri_ms_mass(part_age_phys_yr + dt_physical, temp_metallicity);
 
       // If the entire mass range is outside the SNII progenitor mass range, skip
-      if (M2 < 8.0 || M1 > 40.0)
-        return;
-      M1 = std::max(M1, 8.0);
-      M2 = std::min(M2, 40.0);
+      if (M1 < 8.0 || M2 > 40.0) return;
+      M1 = std::min(M1, 40.0);
+      M2 = std::max(M2, 8.0);
 
       // Particle mass in solar masses
       real_t part_mass_phys_Msun = Units::supercomoving_to_physical<Units::Mass>(
         (Pdata.at(iPart, IMASS) * code_mass).convert_to(Units::solar_mass()),
         aexp
       );
+                                                        // Note:    upper  lower
+      real_t num = part_mass_phys_Msun * timedelay_SNII::kroupa_imf(M1,    M2);
       real_t num_residual = num - int(num);
       num = int(num);
 
