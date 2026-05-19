@@ -354,8 +354,7 @@ public:
         }
       };
     }
-  };
-}
+  }
 
   HyperbolicPolicy_BoundaryConditions_Rad_Default( const Params& params, const ScalarSimulationData& )
   : bc_min(params.bc_min),
