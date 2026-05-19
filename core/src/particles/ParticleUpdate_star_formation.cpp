@@ -198,6 +198,7 @@ public:
     // Third pass, spawn star particles in star forming cells
     U.new_ParticleArray("spawned_particles", n_star_forming_cells);
     U.new_ParticleAttribute("spawned_particles", "mass");
+    U.new_ParticleAttribute("spawned_particles", "birth_mass");
     U.new_ParticleAttribute("spawned_particles", "vx");
     U.new_ParticleAttribute("spawned_particles", "vy");
     U.new_ParticleAttribute("spawned_particles", "vz");
