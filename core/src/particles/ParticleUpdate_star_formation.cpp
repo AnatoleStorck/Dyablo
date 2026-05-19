@@ -36,7 +36,7 @@ namespace rand {
 
             while ((Repar * Norm <= RandNum) & (PoissNum <= NpoissonLimitx10)) {
                 ++PoissNum;
-                Proba += lambda / PoissNum;
+                Proba *= lambda / PoissNum;
                 Repar += Proba;
             }
         } else {
