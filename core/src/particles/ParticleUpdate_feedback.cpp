@@ -64,7 +64,10 @@ public:
     E_SNII_physical ( configMap.getValue_in_code_unit<Units::Energy>("star_feedback", "E_SNII", "1e51 erg") ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ),
     // meant to be temporary until we have proper metallicity evolution and SNII yields
-    metallicity_uniform     ( configMap.getValue<real_t>("constant_metallicity", "metallicity") )
+    metallicity_uniform     ( configMap.getValue<real_t>("constant_metallicity", "metallicity") ),
+    // Remove once seperate particle families
+    star_birth_time_min( configMap.getValue_in_code_unit<Units::Time>(
+                           "star_feedback", "star_birth_time_min", "10 Myr") )
   {
   }
 
@@ -125,6 +128,9 @@ public:
     foreach_particle.foreach_particle( "particles_update_feedback", Ppos,
       KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
     {
+       // Remove once seperate particle families
+      if (Pdata.at(iPart, IBIRTH) < star_birth_time_min) return;
+
       // Age of the particle
       real_t part_age_phys_yr = Units::supercomoving_to_physical<Units::Time>(
         ((t - Pdata.at(iPart, IBIRTH)) * code_time).convert_to(Units::yr()),
@@ -222,6 +228,7 @@ private:
   Timers& timers;
 
   real_t metallicity_uniform;
+  real_t star_birth_time_min;
 
   real_t E_SNII_physical;
 
