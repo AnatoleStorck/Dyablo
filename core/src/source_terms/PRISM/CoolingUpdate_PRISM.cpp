@@ -418,7 +418,7 @@ public:
         double nC = n_and_ion_fracs_loc.n_element[6];
         double nO = n_and_ion_fracs_loc.n_element[8];
         double Z = (12*nC + 16*nO) / (nH + 4*nHe + 12*nC + 16*nO);
-        metallicity = Z;
+        metallicity = Z / 0.0139; // is taken relative to solar
 
         // T_over_mu = 1e4;
 
