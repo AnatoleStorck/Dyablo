@@ -116,24 +116,27 @@ public:
     smallp(configMap.getValue<real_t>("hydro", "smallp", 1e-10)),
     cosmology( configMap.getValue<bool>("cosmology", "active", false))
   {
+    int mpi_rank = GlobalMpiSession::get_comm_world().MPI_Comm_rank();
     real_t h0 = header.h0;
     auto box_size = header.BoxSize * Units::kpc() / h0;
-    std::cout << "Gadget snapshot info:" << std::endl;
-    std::cout << "  Box size :         " << Units::constant_to_code_units(box_size) << " code units ("
-            << box_size.convert_to(Units::Mpc()) << " Mpc = "
-            << box_size.convert_to(Units::Mpc()) * header.h0 << " Mpc/h)" << std::endl;
-    std::cout << "  Redshift :         " << header.Redshift << std::endl;
-    std::cout << "  Expansion factor : " << header.ExpansionFactor << std::endl;
-    std::cout << "  Omega0 :           " << header.Omega0 << std::endl;
-    std::cout << "  OmegaLambda :      " << header.OmegaLambda << std::endl;
-    std::cout << "  HubbleParam :      " << header.h0 << std::endl;
-    std::cout << "  Time :             " << header.Time << " (code units)" << std::endl;
-    std::cout << "  NumPart_Total :    ";
-    for (int i = 0; i < 6; i++)
-    std::cout << header.NumPart_Total[i] + ( (uint64_t)header.NumPart_Total_HighWord[i] << 32 ) << (i < 5 ? ", " : "\n");
-    std::cout << "  MassTable :        ";
-    for (int i = 0; i < 6; i++)
-    std::cout << header.MassTable[i] << (i < 5 ? ", " : "\n");
+    if (mpi_rank == 0) {
+        std::cout << "Gadget snapshot info:" << std::endl;
+        std::cout << "  Box size :         " << Units::constant_to_code_units(box_size) << " code units ("
+                << box_size.convert_to(Units::Mpc()) << " Mpc = "
+                << box_size.convert_to(Units::Mpc()) * header.h0 << " Mpc/h)" << std::endl;
+        std::cout << "  Redshift :         " << header.Redshift << std::endl;
+        std::cout << "  Expansion factor : " << header.ExpansionFactor << std::endl;
+        std::cout << "  Omega0 :           " << header.Omega0 << std::endl;
+        std::cout << "  OmegaLambda :      " << header.OmegaLambda << std::endl;
+        std::cout << "  HubbleParam :      " << header.h0 << std::endl;
+        std::cout << "  Time :             " << header.Time << " (code units)" << std::endl;
+        std::cout << "  NumPart_Total :    ";
+        for (int i = 0; i < 6; i++)
+            std::cout << header.NumPart_Total[i] + ( (uint64_t)header.NumPart_Total_HighWord[i] << 32 ) << (i < 5 ? ", " : "\n");
+        std::cout << "  MassTable :        ";
+        for (int i = 0; i < 6; i++)
+            std::cout << header.MassTable[i] << (i < 5 ? ", " : "\n");
+    }
 
     // Make sure we are compatible with .ini
     DYABLO_ASSERT_HOST_RELEASE( header.NumFilesPerSnapshot == 1, "Only single file gadget snapshots are supported" );
@@ -176,7 +179,9 @@ public:
     _read(4, "PartType4", "star");
     _read(5, "PartType5", "sink");
 
-    std::cout << "Merge all star particles into single array" << std::endl;
+    int mpi_rank = GlobalMpiSession::get_comm_world().MPI_Comm_rank();
+    if (mpi_rank == 0)
+        std::cout << "Merge all star particles into single array" << std::endl;
     if (U.has_ParticleArray("star")) {
         if (U.has_ParticleArray("bulge")) {
             U.merge_particles_if("star", "bulge", "mass");
@@ -214,13 +219,18 @@ public:
     const GadgetHeader& header, HDF5ViewReader& hdf5_reader,
     const size_t itype, const std::string& gadget_part_name, const std::string& part_name
 ) {
-    size_t Npart = header.NumPart_ThisFile[itype];
-    if (Npart == 0) {
-        std::cout << "  No particles of type " << itype << " (" << part_name << ")" << std::endl;
+    int mpi_rank = GlobalMpiSession::get_comm_world().MPI_Comm_rank();
+    size_t Npart_total = header.NumPart_ThisFile[itype];
+    if (Npart_total == 0) {
+        if (mpi_rank == 0)
+            std::cout << "  No particles of type " << itype << " (" << part_name << ")" << std::endl;
         return;
-    } else {
-        std::cout << "  Reading " << Npart << " particles of type " << itype << " (" << part_name << ")" << std::endl;
+    } else if (mpi_rank == 0) {
+        std::cout << "  Reading " << Npart_total << " particles of type " << itype << " (" << part_name << ")" << std::endl;
     }
+
+    // Only rank 0 redistribution happens after loadBalance()
+    const size_t Npart = (mpi_rank == 0) ? Npart_total : 0;
 
     const real_t time = cosmology ?
       scalar_data.get<real_t>("time_physical")
@@ -237,30 +247,8 @@ public:
     U.new_ParticleAttribute(part_name, "birth_mass");
     U.new_ParticleAttribute(part_name, "id");
     U.new_ParticleAttribute(part_name, "birth_time");
-    // Read data from file
+
     using Darr2D = Kokkos::View<T**, Kokkos::LayoutRight>;
-
-    // Those always exist
-    const auto& xp = hdf5_reader.read_dataset<Darr2D>(gadget_part_name + "/Coordinates");
-    const auto& vp = hdf5_reader.read_dataset<Darr2D>(gadget_part_name + "/Velocities");
-    const auto& idp = hdf5_reader.read_dataset<Kokkos::View<uint64_t*> >(gadget_part_name + "/ParticleIDs");
-
-    DYABLO_ASSERT_HOST_RELEASE(
-        (xp.extent(0) == Npart) && (vp.extent(0) == Npart) && (idp.extent(0) == Npart),
-        "Inconsistent number of particles in gadget file for PartType" << itype );
-
-    // Copy data to particle array
-    auto P = U.getParticleArray( part_name );
-    auto Pout = U.getParticleAccessor(
-        part_name,
-        { {"vx",   IVX},
-          {"vy",   IVY},
-          {"vz",   IVZ},
-          {"mass", IMASS},
-          {"birth_mass", IBIRTHMASS},
-          {"birth_time", IBIRTH},
-          {"id",   IID} } );
-
 
     real_t h0 = header.h0;
     real_t aexp = header.ExpansionFactor;
@@ -269,26 +257,49 @@ public:
     real_t mass_unit = Units::constant_to_code_units(Units::Msun() * 1e10 / h0);
     real_t vel_unit = Units::constant_to_code_units(km_per_s / sqrt(aexp));
 
-    Kokkos::parallel_for("InitGadgetParticles", Npart, KOKKOS_LAMBDA(const int i) {
-        // Positions are in kpc/h, comoving
-        P.pos( i, IX ) = xp(i, 0) * len_unit;
-        P.pos( i, IY ) = xp(i, 1) * len_unit;
-        P.pos( i, IZ ) = xp(i, 2) * len_unit;
+    // Only rank 0 reads the bulk datasets and fills the particle array.
+    if (mpi_rank == 0) {
+        const auto& xp = hdf5_reader.read_dataset<Darr2D>(gadget_part_name + "/Coordinates");
+        const auto& vp = hdf5_reader.read_dataset<Darr2D>(gadget_part_name + "/Velocities");
+        const auto& idp = hdf5_reader.read_dataset<Kokkos::View<uint64_t*> >(gadget_part_name + "/ParticleIDs");
 
-        // Velocities are in km/s/sqrt(a), physical
-        Pout.at(i, IVX) = vp(i, 0) * vel_unit;
-        Pout.at(i, IVY) = vp(i, 1) * vel_unit;
-        Pout.at(i, IVZ) = vp(i, 2) * vel_unit;
+        DYABLO_ASSERT_HOST_RELEASE(
+            (xp.extent(0) == Npart) && (vp.extent(0) == Npart) && (idp.extent(0) == Npart),
+            "Inconsistent number of particles in gadget file for PartType" << itype );
 
-        // Assuming all particles have time of initialization as their birth time
-        Pout.at(i, IBIRTH) = time; 
-        Pout.at(i, IID) = idp(i);
+        // Copy data to particle array
+        auto P = U.getParticleArray( part_name );
+        auto Pout = U.getParticleAccessor(
+            part_name,
+            { {"vx",   IVX},
+              {"vy",   IVY},
+              {"vz",   IVZ},
+              {"mass", IMASS},
+              {"birth_mass", IBIRTHMASS},
+              {"birth_time", IBIRTH},
+              {"id",   IID} } );
 
-        if (header.MassTable[itype] > 0) {
-            Pout.at(i, IMASS) = header.MassTable[itype] * mass_unit;
-            Pout.at(i, IBIRTHMASS) = header.MassTable[itype] * mass_unit;
-        }
-    });
+        Kokkos::parallel_for("InitGadgetParticles", Npart, KOKKOS_LAMBDA(const int i) {
+            // Positions are in kpc/h, comoving
+            P.pos( i, IX ) = xp(i, 0) * len_unit;
+            P.pos( i, IY ) = xp(i, 1) * len_unit;
+            P.pos( i, IZ ) = xp(i, 2) * len_unit;
+
+            // Velocities are in km/s/sqrt(a), physical
+            Pout.at(i, IVX) = vp(i, 0) * vel_unit;
+            Pout.at(i, IVY) = vp(i, 1) * vel_unit;
+            Pout.at(i, IVZ) = vp(i, 2) * vel_unit;
+
+            // Assuming all particles have time of initialization as their birth time
+            Pout.at(i, IBIRTH) = time;
+            Pout.at(i, IID) = idp(i);
+
+            if (header.MassTable[itype] > 0) {
+                Pout.at(i, IMASS) = header.MassTable[itype] * mass_unit;
+                Pout.at(i, IBIRTHMASS) = header.MassTable[itype] * mass_unit;
+            }
+        });
+    }
 
     auto _read_optional = [&](const std::string& gadget_attr_name, const std::string& attr_name, const auto& units) {
         read_optional_helper(hdf5_reader, U, part_name, attr_name, gadget_part_name, gadget_attr_name, units, Npart);
@@ -312,15 +323,21 @@ public:
        real_t units,
        size_t Npart
    ) {
+        int mpi_rank = GlobalMpiSession::get_comm_world().MPI_Comm_rank();
+
         if ( !hdf5_reader.has_dataset(gadget_part_name + "/" + gadget_attr_name) )
             return;
-        std::cout << "    gadget." << gadget_attr_name << " → dyablo." << attr_name << std::endl;
+        if (mpi_rank == 0)
+            std::cout << "    gadget." << gadget_attr_name << " → dyablo." << attr_name << std::endl;
 
-        // Create associated particle attribute
+        // Create associated particle attribute (collective across ranks)
         if (!U.has_ParticleAttribute(part_name, attr_name))
             U.new_ParticleAttribute(part_name, attr_name);
 
-        // Read data
+        if (mpi_rank != 0)
+            return;
+
+        // Read data (rank 0 only)
         auto data = hdf5_reader.read_dataset<Kokkos::View<double*> >(gadget_part_name + "/" + gadget_attr_name);
         DYABLO_ASSERT_HOST_RELEASE( data.extent(0) == Npart, "Inconsistent number of particles in gadget file for " << gadget_part_name << " " << gadget_attr_name );
 
@@ -342,12 +359,15 @@ public:
     }
 
     void init_with_scalar_data ( UserData& U, ScalarSimulationData& scalar_data) {
+    int mpi_rank = GlobalMpiSession::get_comm_world().MPI_Comm_rank();
+
     this->read_particles(U, scalar_data);
 
     // ----------------------------------
     //  Create the AMR structure
     // ----------------------------------
-    std::cout << "  Create AMR structure" << std::endl;
+    if (mpi_rank == 0)
+        std::cout << "  Create AMR structure" << std::endl;
 
     ForeachCell& foreach_cell = data.foreach_cell;
     AMRmesh& pmesh     = foreach_cell.get_amr_mesh();
@@ -602,7 +622,8 @@ public:
         });
     };
 
-    std::cout << "Building AMR mesh" << std::endl;
+    if (mpi_rank == 0)
+        std::cout << "Building AMR mesh" << std::endl;
 
     if( this->refine_condition )
     {
@@ -622,16 +643,25 @@ public:
     }
     pmesh.loadBalance();
 
+    // After octants are distributed across ranks, route each particle to the
+    // rank that owns its AMR cell. Until this is done, SPH interpolation on
+    // non-root ranks would have nothing to deposit, and rank 0 would try to
+    // deposit onto cells it no longer owns.
+    U.distributeAllParticles();
+
     // Reallocate and fill U fields
     fill_U();
 
-    std::cout << "SPH interpolation of particle density onto mesh" << std::endl;
+    if (mpi_rank == 0)
+        std::cout << "SPH interpolation of particle density onto mesh" << std::endl;
     reset_U();
     SPH_interpolation(false);
 
     // Remove "gas" particles
-    if( !U.has_ParticleArray("gas") )
-        std::cout << "No gas particles found, skipping removal of gas particle array" << std::endl;
+    if( !U.has_ParticleArray("gas") ) {
+        if (mpi_rank == 0)
+            std::cout << "No gas particles found, skipping removal of gas particle array" << std::endl;
+    }
     else
         U.delete_ParticleArray("gas");
 
