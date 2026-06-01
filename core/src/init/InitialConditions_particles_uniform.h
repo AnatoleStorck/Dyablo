@@ -39,7 +39,7 @@ public:
 
         // Sort array/attributes per array in attribute_map
         std::map< std::string, std::map<std::string, int> > attribute_map; // attribute_map[array_name] contains unique attribute infos 
-        for( int ivar=0; ivar < attributes.size(); ivar++ )
+        for( int ivar=0; ivar < (int)attributes.size(); ivar++ )
         {
             const std::string& full_attr = attributes[ivar];
             // Parse array and attribute name from "<array>/<attribute>" string

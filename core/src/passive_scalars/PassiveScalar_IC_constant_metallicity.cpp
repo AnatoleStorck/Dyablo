@@ -45,13 +45,12 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
   //std::vector<std::string> passive_names;
 
   const real_t metallicity;
+  const bool cie_init;
+  std::string data_path;
   const std::vector<std::string> metals;
   const std::vector<real_t> metal_mass;
   const std::vector<std::string> ions;
   const std::vector<real_t> ion_fracs;
-
-  const bool cie_init;
-  std::string data_path;
   const real_t gamma0;
 
   // CIE interpolation tables (device views, only used when cie_init == true)
