@@ -127,6 +127,8 @@ public:
     Kokkos::View<int> N_supernovae_view("N_supernovae");
     Kokkos::deep_copy(N_supernovae_view, 0);
 
+    // For MPI, we don't want to have the same seed. TODO: Generate a unique seed based on rank and/or clock time?
+
     // Random seed based on current time and timestep (good enough)
     Kokkos::Random_XorShift64_Pool<> random_pool(/*seed=*/12345 + int(t * 1/dt));
 
