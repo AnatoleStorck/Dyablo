@@ -229,7 +229,7 @@ public:
         std::cout << "  Reading " << Npart_total << " particles of type " << itype << " (" << part_name << ")" << std::endl;
     }
 
-    // Only rank 0 redistribution happens after loadBalance()
+    // Only rank 0 for now, redistribution happens after loadBalance()
     const size_t Npart = (mpi_rank == 0) ? Npart_total : 0;
 
     const real_t time = cosmology ?
@@ -372,8 +372,8 @@ public:
     ForeachCell& foreach_cell = data.foreach_cell;
     AMRmesh& pmesh     = foreach_cell.get_amr_mesh();
 
-    int level_min = data.level_min;
-    int level_max = data.level_max;
+    // int level_min = data.level_min;
+    // int level_max = data.level_max;
 
     // auto& analytical_formula = this->analytical_formula;
     std::vector<dyablo::UserData::FieldAccessor_FieldInfo> fields_info = {
@@ -607,40 +607,40 @@ public:
         ghost_comm.exchange_ghosts( Uout );
     };
 
-    auto debug = [&](const std::string& msg)
-    {   
-        auto Uout = U.getAccessor( fields_info );
-        ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
+    // auto debug = [&](const std::string& msg)
+    // {   
+    //     auto Uout = U.getAccessor( fields_info );
+    //     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
-        foreach_cell.foreach_cell("gadget::SPH_interpolation_normalize",
-            Uout.getShape(),
-            KOKKOS_LAMBDA ( const CellIndex& iCell )
-        {
-            real_t rho = Uout.at(iCell, IRho);
-            pos_t cell_size = cells.getCellSize( iCell );
-            real_t Vcell = cell_size[IX]*cell_size[IY]*cell_size[IZ];
-        });
-    };
+    //     foreach_cell.foreach_cell("gadget::SPH_interpolation_normalize",
+    //         Uout.getShape(),
+    //         KOKKOS_LAMBDA ( const CellIndex& iCell )
+    //     {
+    //         real_t rho = Uout.at(iCell, IRho);
+    //         pos_t cell_size = cells.getCellSize( iCell );
+    //         real_t Vcell = cell_size[IX]*cell_size[IY]*cell_size[IZ];
+    //     });
+    // };
 
     if (mpi_rank == 0)
         std::cout << "Building AMR mesh" << std::endl;
 
-    if( this->refine_condition )
-    {
-      RefineCondition& refine_condition = *(this->refine_condition);
-      ScalarSimulationData scalar_data; // Empty scalardata
-      // Refine until level_max using a RefineConditions plugin
-      for (uint8_t level=level_min; level<level_max; ++level)
-      {
-          std::cout << " … Refinement level " << (int)level << ", Noct = " << pmesh.getNumOctants() << std::endl;
-          fill_U();
-          refine_condition.mark_cells(U, scalar_data);
-          // Refine the mesh according to markers
-          pmesh.adapt();
-          // Load balance at each level to avoid excessive inbalance
-          pmesh.loadBalance();
-      }
-    }
+    // if( this->refine_condition )
+    // {
+    //   RefineCondition& refine_condition = *(this->refine_condition);
+    //   ScalarSimulationData scalar_data; // Empty scalardata
+    //   // Refine until level_max using a RefineConditions plugin
+    //   for (uint8_t level=level_min; level<level_max; ++level)
+    //   {
+    //       std::cout << " … Refinement level " << (int)level << ", Noct = " << pmesh.getNumOctants() << std::endl;
+    //       fill_U();
+    //       refine_condition.mark_cells(U, scalar_data);
+    //       // Refine the mesh according to markers
+    //       pmesh.adapt();
+    //       // Load balance at each level to avoid excessive inbalance
+    //       pmesh.loadBalance();
+    //   }
+    // }
     pmesh.loadBalance();
 
     // After octants are distributed across ranks, route each particle to the
