@@ -107,8 +107,8 @@ public:
     const real_t dt = scalar_data.get<real_t>("dt");
     const real_t aexp = scalar_data.hasValue<real_t>("aexp") ? scalar_data.get<real_t>("aexp") : 1;
 
-    auto solar_mass_unit = Units::SOLAR_MASS();
-    auto code_mass = Units::code_units().getUnit<Units::Mass>();
+    // auto solar_mass_unit = Units::SOLAR_MASS();
+    // auto code_mass = Units::code_units().getUnit<Units::Mass>();
 
     const real_t time = cosmology ?
       scalar_data.get<real_t>("time_physical")
@@ -283,9 +283,10 @@ private:
   bool cosmology;
 
   real_t rho_threshold_physical, P_over_rho_threshold_physical;
+  real_t m_particle;
   real_t rho_m;
   real_t epsilon_star;
-  real_t m_particle;
+
   int seed;
   rand::RNGPool rand_pool;
 
