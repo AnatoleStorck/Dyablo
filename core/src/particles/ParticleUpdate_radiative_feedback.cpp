@@ -97,8 +97,8 @@ private:
   ForeachParticle foreach_particle;
   Timers& timers;
 
-  real_t photon_rate;
   int n_groups;
+  real_t photon_rate;
 
   bool cosmology;
 };
