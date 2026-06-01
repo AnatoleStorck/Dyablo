@@ -233,12 +233,12 @@ private:
   ForeachParticle foreach_particle;
   Timers& timers;
 
-  real_t metallicity_uniform;
-  real_t star_birth_time_min;
-
   real_t E_SNII_physical;
 
   bool cosmology;
+
+  real_t metallicity_uniform;
+  real_t star_birth_time_min;
 };
 
 } // namespace dyablo
