@@ -75,6 +75,12 @@ public:
     }, Kokkos::Max<real_t>(inv_dt));
 
     real_t dt = cfl / inv_dt;
+
+    // Temporary fix for when an MPI process has no particles.
+    if (dt != dt || dt == 0.0 || dt == -0.0) {
+      dt = 1.0e10;
+    }
+
     DYABLO_ASSERT_HOST_RELEASE(dt>0, "invalid dt = " << dt);
     return dt;
   }
