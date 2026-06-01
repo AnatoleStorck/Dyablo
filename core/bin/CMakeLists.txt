@@ -103,6 +103,12 @@ configure_file(../../settings/cooling/validate_cooling.py validate_cooling.py CO
 configure_file(test_star_feedback.ini test_star_feedback.ini COPYONLY)
 configure_file(validate_star_feedback.py validate_star_feedback.py COPYONLY)
 
+# Particle move test
+configure_file(test_move_particles.ini test_move_particles.ini COPYONLY)
+
+# G8 test
+configure_file(../../settings/G8.ini test_G8.ini COPYONLY)
+
 if (DYABLO_USE_PRISM)
   configure_file(${CMAKE_SOURCE_DIR}/src/source_terms/PRISM/test_PRISM.ini  test_PRISM.ini COPYONLY)
 endif()
