@@ -78,7 +78,7 @@ public:
 
         auto amu_per_cc     = Units::amu() / Units::cm3();
         auto code_density   = Units::code_units().getUnit<Units::Density>();
-        auto number_density = Units::number_density();
+        // auto number_density = Units::number_density();
 
         Kokkos::View<real_t*> coeff_view("InitialConditions_uniform_metallicity::coeff", coeff_host.size());
         {
