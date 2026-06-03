@@ -334,6 +334,8 @@ public:
     // const int n_groups = this->n_groups;
     const RTZ_type& rtz_solver = this->rtz_solver;
 
+    const bool relax = this->relax;
+
     timers.get("CoolingUpdate_PRISM").start();
 
     // Important note here:
