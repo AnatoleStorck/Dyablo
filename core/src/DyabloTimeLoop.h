@@ -769,15 +769,16 @@ public:
       {
         if( rank == 0 )
           m_scalar_data.print();
-
+        MPI_Barrier(MPI_COMM_WORLD);
         uint32_t nbOcts = m_amr_mesh->getNumOctants();
         uint32_t nbGhosts = m_amr_mesh->getNumGhosts();
         std::cout << "Mesh - rank " << rank << " octs : " << nbOcts << " (" << nbGhosts << ")" << std::endl;
       }
     }
 
-
+    timers.get("MPI ghosts").start();
     GhostCommunicator ghost_comm(*m_amr_mesh, U.getShape(), ghost_count, false, m_communicator);
+    timers.get("MPI ghosts").stop();
 
     auto communicate_ghosts = [&](std::vector< std::string > exchange_vars)
     {
@@ -893,7 +894,9 @@ public:
           U.new_fields({"psi_next"});
       }
 
+      timers.get("Hydro Update").start();
       godunov_updater->update( U, m_scalar_data );
+      timers.get("Hydro Update").stop();
 
       if( rad_updater )
       {
@@ -905,7 +908,9 @@ public:
         }
         // This now has an overriden update in RadUpdate_euler
         // that cycles over radiation groups and updates them.
+        timers.get("Rad Update").start();
         rad_updater->update( U, m_scalar_data );
+        timers.get("Rad Update").stop();
       }
 
       if(gravity_update)
