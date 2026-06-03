@@ -422,7 +422,9 @@ public:
         double Z = (12*nC + 16*nO) / (nH + 4*nHe + 12*nC + 16*nO);
         metallicity = Z / 0.0139; // is taken relative to solar
 
-        // T_over_mu = 1e4;
+        if (T_over_mu < 5) {
+          T_over_mu = 100;
+        }
 
         rtz_solver.solve_chemistry_and_cooling(
           T_over_mu,
