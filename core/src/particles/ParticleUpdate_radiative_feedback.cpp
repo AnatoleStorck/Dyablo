@@ -89,6 +89,7 @@ public:
 
     });
 
+    Kokkos::fence();
     timers.get("ParticleUpdate_radiative_feedback").stop();
   }
 

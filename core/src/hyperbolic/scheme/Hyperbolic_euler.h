@@ -290,6 +290,7 @@ public:
     
     policy.printWarnings();
 
+    Kokkos::fence();
     timers.get("HyperbolicUpdate_euler").stop();
   }
 
