@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -17,9 +18,37 @@
 #include "UserData.h"
 #include "foreach_cell/ForeachCell.h"
 #include "utils/config/ConfigMap.h"
+#include "utils/units/Units.h"
 
 namespace dyablo {
 
+/**
+ * Movie output : column-integrated projections of the simulation.
+ *
+ * The simulation may use an AMR grid : each cell is deposited onto a fixed
+ * resolution output image weighted by the physical overlap between the cell and
+ * the image pixels, so that cells of any refinement level are handled
+ * consistently. The stored quantity is the area-averaged column integral
+ *   I(a,b) = (1/A_pixel) * integral_over_pixel( integral_along_axis( value dl ) )
+ * which has units [value] * [length] and is independent of the chosen output
+ * resolution.
+ *
+ * The projected region can be restricted to a sub-volume centered (by default)
+ * on the box center, which is useful for deep zoom-in simulations.
+ *
+ * Relevant parameters (section [movie]) :
+ *   enabled            : (bool)   enable movie output
+ *   output_frequency   : (int)    write every N iterations
+ *   time_cadence       : (time)   write roughly every <time> of simulation time, e.g. "0.5 Myr"
+ *   trigger_on_output  : (bool)   also write whenever a regular output is written
+ *   output_first_iter  : (bool)   write on the first iteration
+ *   projection_axis    : (csv)    one or more of x,y,z
+ *   output_variables   : (csv)    fields to project (default : all enabled fields)
+ *   image_resolution   : (int)    number of pixels along the longest side of the image
+ *   width              : (length) transverse field of view (square). <=0 => full box
+ *   depth              : (length) line-of-sight integration depth. <=0 => width if set, else full box
+ *   center_x/y/z       : (length) center of the projected region (default : box center)
+ */
 class Output_Movie
 {
 public:
@@ -29,6 +58,7 @@ public:
       m_frequency(configMap.getValue<int>("movie", "output_frequency", -1)),
       m_trigger_on_output(configMap.getValue<bool>("movie", "trigger_on_output", true)),
       m_output_first_iter(configMap.getValue<bool>("movie", "output_first_iter", true)),
+      m_image_resolution(configMap.getValue<int>("movie", "image_resolution", 800)),
       m_xmin(configMap.getValue<real_t>("mesh", "xmin", 0.0)),
       m_xmax(configMap.getValue<real_t>("mesh", "xmax", 1.0)),
       m_ymin(configMap.getValue<real_t>("mesh", "ymin", 0.0)),
@@ -38,6 +68,24 @@ public:
   {
 
     m_enabled = configMap.getValue<bool>("movie", "enabled", false);
+
+    // Transverse field of view and line-of-sight depth (code units, 0 => auto).
+    // "width"/"depth" accept either a raw number (already in code units) or a
+    // value with a physical unit, e.g. "1 kpc".
+    m_width = configMap.getValue_in_code_unit<Units::Length>("movie", "width", "0");
+    m_depth = configMap.getValue_in_code_unit<Units::Length>("movie", "depth", "0");
+
+    // Center of the projected region, default to the box center.
+    m_center_x = configMap.getValue_in_code_unit<Units::Length>("movie", "center_x", real_t(0.5) * (m_xmin + m_xmax));
+    m_center_y = configMap.getValue_in_code_unit<Units::Length>("movie", "center_y", real_t(0.5) * (m_ymin + m_ymax));
+    m_center_z = configMap.getValue_in_code_unit<Units::Length>("movie", "center_z", real_t(0.5) * (m_zmin + m_zmax));
+
+    // Output (approximately) every m_time_cadence of simulation time. This is a
+    // physical time (code units, 0 => disabled) and, because the timestep
+    // varies, only guarantees that at least this much time has elapsed since the
+    // previous time-cadence frame. Accepts a raw number (code units) or a value
+    // with a unit, e.g. "0.5 Myr".
+    m_time_cadence = configMap.getValue_in_code_unit<Units::Time>("movie", "time_cadence", "0");
 
     std::string axis_str = configMap.getValue<std::string>(
       "movie",
@@ -102,8 +150,9 @@ public:
     int iter = scalar_data.get<int>("iter");
     bool frequency_trigger = (m_frequency > 0) && (iter % m_frequency == 0);
     bool output_trigger = m_trigger_on_output && regular_output_written;
+    bool cadence_trigger = time_cadence_elapsed(scalar_data);
 
-    return first_iter || frequency_trigger || output_trigger;
+    return first_iter || frequency_trigger || output_trigger || cadence_trigger;
   }
 
   void save_frame(const UserData& U, const ScalarSimulationData& scalar_data)
@@ -134,6 +183,13 @@ public:
     const uint32_t bz = m_foreach_cell.blockSize()[IZ];
     const uint32_t nbOcts_local = amr_mesh.getNumOctants();
 
+    const int level_min = amr_mesh.get_level_min();
+    const auto coarse = amr_mesh.get_coarse_grid_size();
+
+    const double Lx = static_cast<double>(m_xmax) - static_cast<double>(m_xmin);
+    const double Ly = static_cast<double>(m_ymax) - static_cast<double>(m_ymin);
+    const double Lz = static_cast<double>(m_zmax) - static_cast<double>(m_zmin);
+
     int iter = scalar_data.get<int>("iter");
 
     for( const std::string& var_name : output_variables )
@@ -143,18 +199,30 @@ public:
 
       for( const AxisPlan& axis_plan : valid_axis_plans )
       {
-        Axis axis = axis_plan.axis;
-        const MeshInfo& mesh_info = axis_plan.mesh_info;
-        const double dl = axis_plan.dl;
+        const Axis axis = axis_plan.axis;
+        const ProjectionGeometry& geom = axis_plan.geom;
 
-        std::vector<double> projection_local(mesh_info.projection_size, 0.0);
+        std::vector<double> projection_local(geom.projection_size, 0.0);
 
         for( uint32_t iOct = 0; iOct < nbOcts_local; ++iOct )
         {
+          const int level = static_cast<int>(storage.getLevel({iOct, false}));
+          const int shift = level - level_min;
+
+          // Number of cells along each dimension at this octant's level, taking
+          // the block subdivision into account.
+          const uint64_t ncx = (static_cast<uint64_t>(coarse[IX]) << shift) * bx;
+          const uint64_t ncy = (static_cast<uint64_t>(coarse[IY]) << shift) * by;
+          const uint64_t ncz = (static_cast<uint64_t>(coarse[IZ]) << shift) * bz;
+
+          const double dxc = Lx / static_cast<double>(ncx);
+          const double dyc = Ly / static_cast<double>(ncy);
+          const double dzc = Lz / static_cast<double>(ncz);
+
           auto logical = storage.get_logical_coords({iOct, false});
-          uint64_t oct_x = logical[IX];
-          uint64_t oct_y = logical[IY];
-          uint64_t oct_z = logical[IZ];
+          const uint64_t oct_x = logical[IX];
+          const uint64_t oct_y = logical[IY];
+          const uint64_t oct_z = logical[IZ];
 
           for( uint32_t k = 0; k < bz; ++k )
           {
@@ -162,30 +230,36 @@ public:
             {
               for( uint32_t i = 0; i < bx; ++i )
               {
-                uint64_t gx = oct_x * bx + i;
-                uint64_t gy = oct_y * by + j;
-                uint64_t gz = oct_z * bz + k;
+                // Physical bounding box of this cell (code units).
+                const double x0 = static_cast<double>(m_xmin) + static_cast<double>(oct_x * bx + i) * dxc;
+                const double y0 = static_cast<double>(m_ymin) + static_cast<double>(oct_y * by + j) * dyc;
+                const double z0 = static_cast<double>(m_zmin) + static_cast<double>(oct_z * bz + k) * dzc;
 
-                uint32_t iCell = i + bx * (j + by * k);
-                double value = static_cast<double>(field_host(iCell, 0, iOct));
+                const uint32_t iCell = i + bx * (j + by * k);
+                const double value = static_cast<double>(field_host(iCell, 0, iOct));
 
-                size_t idx = projection_index(axis, gx, gy, gz, mesh_info);
-                projection_local[idx] += value * dl;
+                deposit_cell(axis, x0, x0 + dxc, y0, y0 + dyc, z0, z0 + dzc,
+                             value, geom, projection_local);
               }
             }
           }
         }
 
-        std::vector<double> projection_global(mesh_info.projection_size, 0.0);
+        std::vector<double> projection_global(geom.projection_size, 0.0);
         mpi_comm.MPI_Allreduce(
           projection_local.data(),
           projection_global.data(),
-          static_cast<int>(mesh_info.projection_size),
+          static_cast<int>(geom.projection_size),
           MpiComm::MPI_Op_t::SUM);
 
         if( mpi_rank == 0 )
         {
-          write_projection(axis, var_name, iter, projection_global, mesh_info);
+          // Normalize the accumulated (value * depth * area) by the pixel area
+          // to obtain the area-averaged column integral.
+          for( double& v : projection_global )
+            v *= geom.inv_pixel_area;
+
+          write_projection(axis, var_name, iter, projection_global, geom);
         }
       }
     }
@@ -199,23 +273,77 @@ private:
     Z
   };
 
-  struct MeshInfo
+  // Output image geometry and the physical region it covers, for one axis.
+  // The image has numpy shape (res_b, res_a) and is stored in C order, so the
+  // pixel at column a, row b lives at index a + res_a * b.
+  struct ProjectionGeometry
   {
-    uint64_t nx = 0;
-    uint64_t ny = 0;
-    uint64_t nz = 0;
-
-    size_t out_n0 = 0;
-    size_t out_n1 = 0;
+    // Image dimensions.
+    size_t res_a = 0; // horizontal axis, fast (column) index
+    size_t res_b = 0; // vertical axis, slow (row) index
     size_t projection_size = 0;
+
+    // Projected region in the image plane (code units).
+    double a_min = 0;
+    double b_min = 0;
+    double a_max = 0;
+    double b_max = 0;
+    double ps_a = 0; // pixel size along a
+    double ps_b = 0; // pixel size along b
+
+    // Integration range along the projection axis (code units).
+    double d_min = 0;
+    double d_max = 0;
+
+    double inv_pixel_area = 0; // 1 / (ps_a * ps_b)
   };
 
   struct AxisPlan
   {
     Axis axis = Axis::Z;
-    MeshInfo mesh_info;
-    double dl = 0;
+    ProjectionGeometry geom;
   };
+
+  // Box geometry expressed in the (a, b, depth) frame of a projection axis,
+  // where (a, b) are the two image-plane axes and depth is the projection axis.
+  struct AxisFrame
+  {
+    double La = 0;            // box length along a
+    double Lb = 0;            // box length along b
+    double Ldepth = 0;        // box length along the projection axis
+    double a_box_min = 0;     // box minimum along a
+    double b_box_min = 0;     // box minimum along b
+    double depth_box_min = 0; // box minimum along the projection axis
+    double ca = 0;            // region center along a
+    double cb = 0;            // region center along b
+    double cdepth = 0;        // region center along the projection axis
+  };
+
+  // Returns true when at least m_time_cadence of simulation time has elapsed
+  // since the last time-cadence frame. The reference time is snapped to a
+  // regular grid (multiples of m_time_cadence) so that the movie sampling does
+  // not slowly drift even though the timestep varies between iterations.
+  bool time_cadence_elapsed(const ScalarSimulationData& scalar_data)
+  {
+    if( m_time_cadence <= 0 )
+      return false;
+
+    real_t time = scalar_data.get<real_t>("time");
+
+    if( !m_cadence_initialized )
+    {
+      m_last_cadence_time = std::floor(time / m_time_cadence) * m_time_cadence;
+      m_cadence_initialized = true;
+    }
+
+    if( time - m_last_cadence_time >= m_time_cadence )
+    {
+      m_last_cadence_time = std::floor(time / m_time_cadence) * m_time_cadence;
+      return true;
+    }
+
+    return false;
+  }
 
   static std::string trim_copy(std::string s)
   {
@@ -284,110 +412,128 @@ private:
     return values;
   }
 
-  bool compute_mesh_info(Axis axis, MeshInfo& info, std::string& reason)
+  // Express the box and the region center in the (a, b, depth) frame of the
+  // given projection axis :
+  //   Axis Z : a = x, b = y, depth = z
+  //   Axis X : a = y, b = z, depth = x
+  //   Axis Y : a = x, b = z, depth = y
+  AxisFrame axis_frame(Axis axis) const
   {
-    AMRmesh& amr_mesh = m_foreach_cell.get_amr_mesh();
-    MpiComm mpi_comm = amr_mesh.getMpiComm();
-    auto storage = amr_mesh.getStorage();
+    const double Lx = static_cast<double>(m_xmax) - static_cast<double>(m_xmin);
+    const double Ly = static_cast<double>(m_ymax) - static_cast<double>(m_ymin);
+    const double Lz = static_cast<double>(m_zmax) - static_cast<double>(m_zmin);
 
-    const uint32_t nbOcts_local = amr_mesh.getNumOctants();
-
-    int local_level_min = std::numeric_limits<int>::max();
-    int local_level_max = std::numeric_limits<int>::min();
-
-    for( uint32_t iOct = 0; iOct < nbOcts_local; ++iOct )
-    {
-      int level = storage.getLevel({iOct, false});
-      local_level_min = std::min(local_level_min, level);
-      local_level_max = std::max(local_level_max, level);
-    }
-
-    if( nbOcts_local == 0 )
-    {
-      local_level_min = std::numeric_limits<int>::max() / 2;
-      local_level_max = std::numeric_limits<int>::min() / 2;
-    }
-
-    int global_level_min = 0;
-    int global_level_max = 0;
-    mpi_comm.MPI_Allreduce(&local_level_min, &global_level_min, 1, MpiComm::MPI_Op_t::MIN);
-    mpi_comm.MPI_Allreduce(&local_level_max, &global_level_max, 1, MpiComm::MPI_Op_t::MAX);
-
-    if( global_level_min != global_level_max )
-    {
-      reason = "mesh is not uniform in refinement level (AMR detected)";
-      return false;
-    }
-
-    int level_min = amr_mesh.get_level_min();
-    int shift = global_level_min - level_min;
-    if( shift < 0 )
-    {
-      reason = "internal level mismatch in AMR mesh";
-      return false;
-    }
-    if( shift >= 63 )
-    {
-      reason = "grid level is too large for movie projection indexing";
-      return false;
-    }
-
-    auto coarse = amr_mesh.get_coarse_grid_size();
-
-    uint64_t oct_nx = static_cast<uint64_t>(coarse[IX]) << shift;
-    uint64_t oct_ny = static_cast<uint64_t>(coarse[IY]) << shift;
-    uint64_t oct_nz = static_cast<uint64_t>(coarse[IZ]) << shift;
-
-    uint64_t expected_global_octs = oct_nx * oct_ny * oct_nz;
-    if( expected_global_octs != amr_mesh.getGlobalNumOctants() )
-    {
-      reason = "mesh octant count does not match a full uniform grid";
-      return false;
-    }
-
-    const uint32_t bx = m_foreach_cell.blockSize()[IX];
-    const uint32_t by = m_foreach_cell.blockSize()[IY];
-    const uint32_t bz = m_foreach_cell.blockSize()[IZ];
-
-    info.nx = oct_nx * bx;
-    info.ny = oct_ny * by;
-    info.nz = oct_nz * bz;
-
-    if( info.nx == 0 || info.ny == 0 || info.nz == 0 )
-    {
-      reason = "empty grid dimensions";
-      return false;
-    }
-
+    AxisFrame f;
     switch( axis )
     {
+    case Axis::Z:
+      f.La = Lx; f.Lb = Ly; f.Ldepth = Lz;
+      f.a_box_min = m_xmin; f.b_box_min = m_ymin; f.depth_box_min = m_zmin;
+      f.ca = m_center_x; f.cb = m_center_y; f.cdepth = m_center_z;
+      break;
     case Axis::X:
-      info.out_n0 = static_cast<size_t>(info.nz);
-      info.out_n1 = static_cast<size_t>(info.ny);
+      f.La = Ly; f.Lb = Lz; f.Ldepth = Lx;
+      f.a_box_min = m_ymin; f.b_box_min = m_zmin; f.depth_box_min = m_xmin;
+      f.ca = m_center_y; f.cb = m_center_z; f.cdepth = m_center_x;
       break;
     case Axis::Y:
-      info.out_n0 = static_cast<size_t>(info.nz);
-      info.out_n1 = static_cast<size_t>(info.nx);
-      break;
-    case Axis::Z:
-      info.out_n0 = static_cast<size_t>(info.ny);
-      info.out_n1 = static_cast<size_t>(info.nx);
+      f.La = Lx; f.Lb = Lz; f.Ldepth = Ly;
+      f.a_box_min = m_xmin; f.b_box_min = m_zmin; f.depth_box_min = m_ymin;
+      f.ca = m_center_x; f.cb = m_center_z; f.cdepth = m_center_y;
       break;
     }
+    return f;
+  }
 
-    if( info.out_n1 != 0 && info.out_n0 > std::numeric_limits<size_t>::max() / info.out_n1 )
+  bool compute_geometry(Axis axis, ProjectionGeometry& geom, std::string& reason) const
+  {
+    if( m_image_resolution <= 0 )
+    {
+      reason = "movie/image_resolution must be strictly positive";
+      return false;
+    }
+
+    const AxisFrame f = axis_frame(axis);
+
+    if( f.La <= 0 || f.Lb <= 0 || f.Ldepth <= 0 )
+    {
+      reason = "degenerate box dimensions";
+      return false;
+    }
+
+    // Transverse field of view : square region of side m_width if requested,
+    // otherwise the full box extent.
+    double region_a, region_b;
+    if( m_width > 0 )
+    {
+      region_a = m_width;
+      region_b = m_width;
+      geom.a_min = f.ca - 0.5 * m_width;
+      geom.b_min = f.cb - 0.5 * m_width;
+    }
+    else
+    {
+      region_a = f.La;
+      region_b = f.Lb;
+      geom.a_min = f.a_box_min;
+      geom.b_min = f.b_box_min;
+    }
+    geom.a_max = geom.a_min + region_a;
+    geom.b_max = geom.b_min + region_b;
+
+    // Line-of-sight integration range. Defaults to a cube (depth == width) when
+    // a width is set, otherwise to the full box depth.
+    double half_depth;
+    bool restrict_depth = true;
+    if( m_depth > 0 )
+      half_depth = 0.5 * m_depth;
+    else if( m_width > 0 )
+      half_depth = 0.5 * m_width;
+    else
+      restrict_depth = false;
+
+    if( restrict_depth )
+    {
+      geom.d_min = f.cdepth - half_depth;
+      geom.d_max = f.cdepth + half_depth;
+    }
+    else
+    {
+      geom.d_min = f.depth_box_min;
+      geom.d_max = f.depth_box_min + f.Ldepth;
+    }
+
+    // Pixel grid : square pixels, the longest side gets m_image_resolution pixels.
+    const double longest = std::max(region_a, region_b);
+    const double pixel_size = longest / static_cast<double>(m_image_resolution);
+    if( pixel_size <= 0 )
+    {
+      reason = "non-positive pixel size";
+      return false;
+    }
+
+    long res_a = std::max<long>(1, std::llround(region_a / pixel_size));
+    long res_b = std::max<long>(1, std::llround(region_b / pixel_size));
+
+    geom.res_a = static_cast<size_t>(res_a);
+    geom.res_b = static_cast<size_t>(res_b);
+
+    if( geom.res_b != 0 && geom.res_a > std::numeric_limits<size_t>::max() / geom.res_b )
     {
       reason = "projection dimensions overflow";
       return false;
     }
+    geom.projection_size = geom.res_a * geom.res_b;
 
-    info.projection_size = info.out_n0 * info.out_n1;
-
-    if( info.projection_size > static_cast<size_t>(std::numeric_limits<int>::max()) )
+    if( geom.projection_size > static_cast<size_t>(std::numeric_limits<int>::max()) )
     {
       reason = "projection array is too large for MPI_Allreduce count";
       return false;
     }
+
+    geom.ps_a = region_a / static_cast<double>(geom.res_a);
+    geom.ps_b = region_b / static_cast<double>(geom.res_b);
+    geom.inv_pixel_area = 1.0 / (geom.ps_a * geom.ps_b);
 
     return true;
   }
@@ -429,9 +575,9 @@ private:
 
     for( Axis axis : m_axes )
     {
-      MeshInfo mesh_info;
+      ProjectionGeometry geom;
       std::string unsupported_reason;
-      if( !compute_mesh_info(axis, mesh_info, unsupported_reason) )
+      if( !compute_geometry(axis, geom, unsupported_reason) )
       {
         if( mpi_rank == 0 && m_warned_unsupported_axes.insert(axis).second )
         {
@@ -441,48 +587,88 @@ private:
         continue;
       }
 
-      axis_plans.push_back({axis, mesh_info, line_element(axis, mesh_info)});
+      axis_plans.push_back({axis, geom});
     }
 
     return axis_plans;
   }
 
-  double line_element(Axis axis, const MeshInfo& info) const
+  // Deposit a single cell (physical bounding box, code units) onto the output
+  // image, weighting by the overlap area with each pixel and by the overlap of
+  // the cell along the projection axis with the integration range. The pixel
+  // area normalization is applied later, once, to the reduced image.
+  static void deposit_cell(Axis axis,
+                           double x0, double x1,
+                           double y0, double y1,
+                           double z0, double z1,
+                           double value,
+                           const ProjectionGeometry& g,
+                           std::vector<double>& projection)
   {
-    const double dx = (m_xmax - m_xmin) / static_cast<double>(info.nx);
-    const double dy = (m_ymax - m_ymin) / static_cast<double>(info.ny);
-    const double dz = (m_zmax - m_zmin) / static_cast<double>(info.nz);
-
+    double a0, a1, b0, b1, d0, d1;
     switch( axis )
     {
-    case Axis::X:
-      return dx;
-    case Axis::Y:
-      return dy;
     case Axis::Z:
-      return dz;
+      a0 = x0; a1 = x1; b0 = y0; b1 = y1; d0 = z0; d1 = z1;
+      break;
+    case Axis::X:
+      a0 = y0; a1 = y1; b0 = z0; b1 = z1; d0 = x0; d1 = x1;
+      break;
+    case Axis::Y:
+      a0 = x0; a1 = x1; b0 = z0; b1 = z1; d0 = y0; d1 = y1;
+      break;
+    default:
+      return;
     }
 
-    return dz;
-  }
+    // Overlap of the cell with the integration range along the axis.
+    const double depth_overlap = std::min(d1, g.d_max) - std::max(d0, g.d_min);
+    if( depth_overlap <= 0 )
+      return;
 
-  size_t projection_index(Axis axis,
-                          uint64_t gx,
-                          uint64_t gy,
-                          uint64_t gz,
-                          const MeshInfo& info) const
-  {
-    switch( axis )
+    // Overlap of the cell footprint with the projected region.
+    const double a_lo = std::max(a0, g.a_min);
+    const double a_hi = std::min(a1, g.a_max);
+    if( a_hi <= a_lo )
+      return;
+    const double b_lo = std::max(b0, g.b_min);
+    const double b_hi = std::min(b1, g.b_max);
+    if( b_hi <= b_lo )
+      return;
+
+    const long res_a = static_cast<long>(g.res_a);
+    const long res_b = static_cast<long>(g.res_b);
+
+    long ja0 = static_cast<long>(std::floor((a_lo - g.a_min) / g.ps_a));
+    long ja1 = static_cast<long>(std::ceil((a_hi - g.a_min) / g.ps_a));
+    long jb0 = static_cast<long>(std::floor((b_lo - g.b_min) / g.ps_b));
+    long jb1 = static_cast<long>(std::ceil((b_hi - g.b_min) / g.ps_b));
+
+    ja0 = std::max<long>(ja0, 0);
+    jb0 = std::max<long>(jb0, 0);
+    ja1 = std::min<long>(ja1, res_a);
+    jb1 = std::min<long>(jb1, res_b);
+
+    const double column = value * depth_overlap;
+
+    for( long jb = jb0; jb < jb1; ++jb )
     {
-    case Axis::X:
-      return static_cast<size_t>(gy + info.ny * gz);
-    case Axis::Y:
-      return static_cast<size_t>(gx + info.nx * gz);
-    case Axis::Z:
-      return static_cast<size_t>(gx + info.nx * gy);
-    }
+      const double pb_lo = g.b_min + static_cast<double>(jb) * g.ps_b;
+      const double overlap_b = std::min(b_hi, pb_lo + g.ps_b) - std::max(b_lo, pb_lo);
+      if( overlap_b <= 0 )
+        continue;
 
-    return 0;
+      const size_t row_offset = static_cast<size_t>(jb) * g.res_a;
+      for( long ja = ja0; ja < ja1; ++ja )
+      {
+        const double pa_lo = g.a_min + static_cast<double>(ja) * g.ps_a;
+        const double overlap_a = std::min(a_hi, pa_lo + g.ps_a) - std::max(a_lo, pa_lo);
+        if( overlap_a <= 0 )
+          continue;
+
+        projection[row_offset + static_cast<size_t>(ja)] += column * overlap_a * overlap_b;
+      }
+    }
   }
 
   static void write_npy_2d(const std::filesystem::path& file_path,
@@ -531,13 +717,13 @@ private:
                         const std::string& var_name,
                         int iter,
                         const std::vector<double>& projection,
-                        const MeshInfo& info) const
+                        const ProjectionGeometry& geom) const
   {
     std::ostringstream iter_suffix;
     iter_suffix << "_iter" << std::setw(6) << std::setfill('0') << iter;
     std::filesystem::path file_path = m_output_dir / (var_name + "_" + axis_tag(axis) + iter_suffix.str() + ".npy");
 
-    write_npy_2d(file_path, projection, info.out_n0, info.out_n1);
+    write_npy_2d(file_path, projection, geom.res_b, geom.res_a);
   }
 
 private:
@@ -549,6 +735,8 @@ private:
   bool m_output_first_iter = true;
   bool m_enabled = false;
 
+  int m_image_resolution = 800;
+
   std::vector<Axis> m_axes = {Axis::Z};
 
   std::vector<std::string> m_requested_variables;
@@ -559,6 +747,18 @@ private:
   real_t m_ymax = 1;
   real_t m_zmin = 0;
   real_t m_zmax = 1;
+
+  // Projected region (code units). Width/depth <= 0 mean "full box".
+  double m_width = 0;
+  double m_depth = 0;
+  double m_center_x = 0;
+  double m_center_y = 0;
+  double m_center_z = 0;
+
+  // Time-based output cadence (simulation time, code units). 0 => disabled.
+  real_t m_time_cadence = 0;
+  bool m_cadence_initialized = false;
+  real_t m_last_cadence_time = 0;
 
   std::set<Axis> m_warned_unsupported_axes;
   std::set<std::string> m_warned_missing_variables;
