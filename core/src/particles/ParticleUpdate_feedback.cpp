@@ -67,7 +67,9 @@ public:
     metallicity_uniform     ( configMap.getValue<real_t>("constant_metallicity", "metallicity") ),
     // Remove once seperate particle families
     star_birth_time_min( configMap.getValue_in_code_unit<Units::Time>(
-                           "star_feedback", "star_birth_time_min", "10 Myr") )
+                           "star_feedback", "star_birth_time_min", "1.1 Myr") ),
+    n_passive_scalars( configMap.getValue<int>("run", "n_passive_scalars",
+        configMap.getValue<std::vector<std::string>>("run", "passive_scalars_names", {}).size()) )
   {
   }
 
@@ -85,7 +87,7 @@ public:
     );
 
     enum VarIndex {
-      IRho, IE_tot, IRho_vx, IRho_vy, IRho_vz, IRho_Z,
+      IRho, IE_tot, IRho_vx, IRho_vy, IRho_vz, IRho_Z, IRho_added,
     };
     enum VarIndex_particle {
       IMASS, IBIRTHMASS, IVX, IVY, IVZ, IBIRTH, IMETAL
@@ -93,8 +95,12 @@ public:
 
     timers.get("ParticleUpdate_feedback").start();
 
+    // Scratch field to replenish the passive scalars by accumulating the gas mass deposited
+    // into each cell by the supernovae of this step.
+    U.new_fields( {"feedback_rho_added"} );
+
     std::vector<UserData::FieldAccessor_FieldInfo>
-      Uin_infos = {{"rho", IRho},    {"e_tot", IE_tot},    {"rho_vx", IRho_vx},    {"rho_vy", IRho_vy},    {"rho_vz", IRho_vz}};
+      Uin_infos = {{"rho", IRho},    {"e_tot", IE_tot},    {"rho_vx", IRho_vx},    {"rho_vy", IRho_vy},    {"rho_vz", IRho_vz},    {"feedback_rho_added", IRho_added}};
     std::vector<UserData::ParticleAccessor_AttributeInfo>
       pinfos = {{"mass", IMASS}, {"birth_mass", IBIRTHMASS}, {"vx", IVX}, {"vy", IVY}, {"vz", IVZ}, {"birth_time", IBIRTH}};
 
@@ -103,6 +109,13 @@ public:
     //   Uin_infos.push_back( {"metallicity", IRho_Z} );
     //   pinfos.push_back( {"metallicity", IMETAL} );
     // }
+
+    std::vector<UserData::FieldAccessor_FieldInfo> passive_fields;
+    for (int i = 0; i < n_passive_scalars; ++i)
+      passive_fields.push_back( {"rho_scalar_" + std::to_string(i), i} );
+    UserData::FieldAccessor Uin_passive;
+    if (!passive_fields.empty())
+      Uin_passive = U.getAccessor( passive_fields );
 
     // Get accessors
     auto Ppos = U.getParticleArray( "particles" );
@@ -205,6 +218,9 @@ public:
 
         // Atomic are mandatory since multiple particles can explode in the same cell
         Kokkos::atomic_add(&Uin.at(iCell, IRho), rho_loss);
+        // Track the mass added to this cell so the passive scalars can be
+        // rescaled consistently once all deposits are summed (see cell pass below)
+        Kokkos::atomic_add(&Uin.at(iCell, IRho_added), rho_loss);
         Kokkos::atomic_add(&Uin.at(iCell, IE_tot), ethermal + ekin);
         Kokkos::atomic_add(&Uin.at(iCell, IRho_vx), rho_loss * part_vel[IX]);
         Kokkos::atomic_add(&Uin.at(iCell, IRho_vy), rho_loss * part_vel[IY]);
@@ -220,6 +236,27 @@ public:
         Kokkos::atomic_add(&N_supernovae_view(), int(num));
       }
     });
+
+    // Inject the returned supernova mass back into the passive scalars.
+    // Lacking per-element SNII yields, the ejecta is assumed to carry the ambient
+    // cell composition, so every per-volume passive scalar - element number densities and ion
+    // abundances - scales with the gas density: field_new = field_old * rho_new / rho_old.
+    if (n_passive_scalars > 0) {
+      foreach_cell.foreach_cell( "feedback_scale_passive_scalars", U.getShape(),
+        CELL_LAMBDA( const ForeachCell::CellIndex& iCell )
+      {
+        const real_t rho_added = Uin.at(iCell, IRho_added);
+        if (rho_added > 0) {
+          const real_t rho_new = Uin.at(iCell, IRho);
+          const real_t rho_old = rho_new - rho_added;
+          const real_t factor  = rho_new / rho_old;
+          for (int ivar = 0; ivar < Uin_passive.nbFields(); ++ivar)
+            Uin_passive.at_ivar(iCell, ivar) *= factor;
+        }
+      });
+    }
+
+    U.delete_field( "feedback_rho_added" );
 
     int N_supernovae = 0;
     Kokkos::deep_copy(N_supernovae, N_supernovae_view);
@@ -241,6 +278,7 @@ private:
 
   real_t metallicity_uniform;
   real_t star_birth_time_min;
+  int n_passive_scalars;
 };
 
 } // namespace dyablo
