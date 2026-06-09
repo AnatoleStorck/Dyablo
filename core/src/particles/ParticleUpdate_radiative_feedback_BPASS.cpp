@@ -268,9 +268,21 @@ public:
 
   void update(UserData& U, ScalarSimulationData& scalar_data)
   {
-    const real_t t    = scalar_data.get<real_t>("time");
-    const real_t dt   = scalar_data.get<real_t>("dt");
+
     const real_t aexp = scalar_data.get<real_t>("aexp");
+
+    const real_t code2cm3 = Units::supercomoving_to_physical<Units::Volume>(
+      (1 * Units::code_units().getUnit<Units::Volume>()).convert_to(Units::cm3()),
+      aexp
+    );
+    const auto code_time = Units::code_units().getUnit<Units::Time>();
+    const auto code_mass = Units::code_units().getUnit<Units::Mass>();
+
+    const real_t dt   = scalar_data.get<real_t>("dt");
+
+    const real_t t_now_code = cosmology ? scalar_data.get<real_t>("time_physical")
+                                        : scalar_data.get<real_t>("time");
+    const real_t t_phys_yr = (t_now_code * code_time).convert_to(Units::yr());
 
     enum VarIndex_particle {
       IBIRTHMASS, IBIRTH, IMETAL,
@@ -299,15 +311,9 @@ public:
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
     const real_t dt_phys_s = Units::supercomoving_to_physical<Units::Time>(
-      (dt * Units::code_units().getUnit<Units::Time>()).convert_to(Units::s()),
+      (dt * code_time).convert_to(Units::s()),
       aexp
     );
-    const real_t code2cm3 = Units::supercomoving_to_physical<Units::Volume>(
-      (1 * Units::code_units().getUnit<Units::Volume>()).convert_to(Units::cm3()),
-      aexp
-    );
-    const auto code_time = Units::code_units().getUnit<Units::Time>();
-    const auto code_mass = Units::code_units().getUnit<Units::Mass>();
 
     // Local copies for KOKKOS_LAMBDA capture (View is ref-counted, cheap).
     auto photon_rates_l = this->photon_rates;
@@ -338,6 +344,12 @@ public:
       pos_t cell_size = cells.getCellSize(iCell);
       const real_t cell_volume_physical =
         cell_size[IX] * cell_size[IY] * cell_size[IZ] * code2cm3;
+
+      // Particle age in physical years. birth_time is already a physical code
+      // time (see comment above), so this is a plain difference.
+      const real_t birth_time_phys_yr =
+        (Pdata.at(iPart, IBIRTH) * code_time).convert_to(Units::yr());
+      const real_t age_phys_yr = t_phys_yr - birth_time_phys_yr;
 
       const real_t Mstar_phys_Msun =
         (Pdata.at(iPart, IBIRTHMASS) * code_mass).convert_to(Units::solar_mass());
