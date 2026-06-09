@@ -273,7 +273,7 @@ public:
     const real_t aexp = scalar_data.get<real_t>("aexp");
 
     enum VarIndex_particle {
-      IMASS, IBIRTH, IMETAL,
+      IBIRTHMASS, IBIRTH, IMETAL,
     };
 
     timers.get("ParticleUpdate_radiative_feedback_BPASS").start();
@@ -287,7 +287,7 @@ public:
     //   "ParticleUpdate_radiative_feedback_BPASS requires a 'metallicity' particle attribute"
     // );
     std::vector<UserData::ParticleAccessor_AttributeInfo> pinfos = {
-      {"mass",        IMASS},
+      {"birth_mass",  IBIRTHMASS},
       {"birth_time",  IBIRTH},
       //{"metallicity", IMETAL},
     };
@@ -339,18 +339,8 @@ public:
       const real_t cell_volume_physical =
         cell_size[IX] * cell_size[IY] * cell_size[IZ] * code2cm3;
 
-      // Particle age in physical years
-      const real_t age_code = t - Pdata.at(iPart, IBIRTH);
-      const real_t age_phys_yr = Units::supercomoving_to_physical<Units::Time>(
-        (age_code * code_time).convert_to(Units::yr()),
-        aexp
-      );
-
-      // Particle mass in solar masses
-      const real_t Mstar_phys_Msun = Units::supercomoving_to_physical<Units::Mass>(
-        (Pdata.at(iPart, IMASS) * code_mass).convert_to(Units::solar_mass()),
-        aexp
-      );
+      const real_t Mstar_phys_Msun =
+        (Pdata.at(iPart, IBIRTHMASS) * code_mass).convert_to(Units::solar_mass());
 
       
       //const real_t Z = Pdata.at(iPart, IMETAL);
