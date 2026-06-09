@@ -91,6 +91,8 @@ public:
       return rhoc * omegam * Delta;
     }()),
     epsilon_star    ( configMap.getValue<real_t>("star_formation", "epsilon_star") ),
+    n_passive_scalars( configMap.getValue<int>("run", "n_passive_scalars",
+        configMap.getValue<std::vector<std::string>>("run", "passive_scalars_names", {}).size()) ),
     seed            ( 100 ),
     rand_pool       ( seed*GlobalMpiSession::get_comm_world().MPI_Comm_rank()+1)
   {
@@ -154,6 +156,13 @@ public:
     UserData::FieldAccessor UinZ;
     if (has_metallicity)
       UinZ = U.getAccessor( {{"metallicity", 0}} );
+
+    std::vector<UserData::FieldAccessor::FieldInfo> passive_fields;
+    for (int i = 0; i < n_passive_scalars; ++i)
+      passive_fields.push_back( {"rho_scalar_" + std::to_string(i), i} );
+    UserData::FieldAccessor Uin_passive;
+    if (!passive_fields.empty())
+      Uin_passive = U.getAccessor( passive_fields );
 
     auto isStarFormingCell = KOKKOS_LAMBDA( real_t rho, real_t P )
     {
@@ -277,7 +286,15 @@ public:
           UinZ.at_ivar(iCell, 0) -= Zcell * Mparticle / Vcell;
         }
 
+        // Deplete the gas and passive scalars following SF
+        const real_t rho_old = q.rho;
         q.rho -= Mparticle / Vcell;
+        if (Mparticle > 0) {
+          const real_t rho_factor = q.rho / rho_old;
+          for (int ivar = 0; ivar < Uin_passive.nbFields(); ++ivar)
+            Uin_passive.at_ivar(iCell, ivar) *= rho_factor;
+        }
+
         auto u_out = policy.primToCons( q );
         policy.setConsState( Uin, iCell, u_out );
 
@@ -303,6 +320,7 @@ private:
   real_t rho_threshold_physical, P_over_rho_threshold_physical;
   real_t rho_m;
   real_t epsilon_star;
+  int n_passive_scalars;
   real_t vol_min;
   int seed;
   rand::RNGPool rand_pool;
