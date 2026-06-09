@@ -174,13 +174,12 @@ public:
       M1 = std::min(M1, 40.0);
       M2 = std::max(M2, 8.0);
 
-      // Particle mass in solar masses
-      real_t part_mass_phys_Msun = Units::supercomoving_to_physical<Units::Mass>(
-        (Pdata.at(iPart, IMASS) * code_mass).convert_to(Units::solar_mass()),
+      real_t part_birth_mass_phys_Msun = Units::supercomoving_to_physical<Units::Mass>(
+        (Pdata.at(iPart, IBIRTHMASS) * code_mass).convert_to(Units::solar_mass()),
         aexp
       );
-                                                        // Note:    upper  lower
-      real_t num = part_mass_phys_Msun * timedelay_SNII::kroupa_imf(M1,    M2);
+                                                              // Note:    upper  lower
+      real_t num = part_birth_mass_phys_Msun * timedelay_SNII::kroupa_imf(M1,    M2);
       real_t num_residual = num - int(num);
       num = int(num);
 
