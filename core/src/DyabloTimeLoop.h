@@ -504,6 +504,10 @@ public:
         std::cout << "Restart detected: skipping passive scalar re-initialization" << std::endl;
       }
 
+      // add a new field "PRISM_iter" if not already present, to be used for PRISM tracer particles
+      if( !U.has_field("PRISM_iter") )
+        U.new_fields({"PRISM_iter"});
+
       auto fields = U.getEnabledFields();
       std::cout << "Enabled fields : " << std::endl;
       for (auto f: fields)
@@ -814,6 +818,7 @@ public:
         oss << "rho_scalar_" << i;
         fields_to_exchange.push_back(oss.str());
       }
+      fields_to_exchange.push_back("PRISM_iter");
     }
     if( this->has_mhd )
     {
