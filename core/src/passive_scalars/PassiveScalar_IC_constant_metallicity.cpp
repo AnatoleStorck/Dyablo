@@ -10,7 +10,7 @@
 namespace dyablo{
 
 namespace {
-  // Parse "xH_I" -> element="H", state=0 (Roman I = 1 -> 0-indexed column)
+  // Parse "xH_I" -> element="H", state=0 (Roman I = neutral = first data column)
   // Also accepts "H_I" without leading 'x'.
   void parse_ion_name( const std::string& ion, std::string& element, int& state ) {
     size_t start = 0;
@@ -35,7 +35,7 @@ namespace {
       if( i + 1 < roman.size() && v < value(roman[i+1]) ) total -= v;
       else total += v;
     }
-    state = total - 1; // I -> 0 (neutral), II -> 1, ...
+    state = total - 1; // Roman I (neutral) -> first data column (state 0), II -> state 1, ...
   }
 }
 
@@ -78,10 +78,14 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
       // Load CIE ionization-fraction tables for each unique element
       // ---------------------------------------------------------------
       // Each file ${data_path}/CIE_init/cie_<Elem>.dat has the format:
-      //   # T_K Elem0 Elem1 ...
-      //   T1   f0   f1   ...
-      //   T2   f0   f1   ...
+      //   # T_K Elem1 Elem2 ...
+      //   T1   f1   f2   ...
+      //   T2   f1   f2   ...
       //   ...
+      // Ionization states are 1-indexed in the header (Elem1 = neutral, e.g. H1 = HI),
+      // matching the Roman-numeral convention of the ion names (xH_I = HI). The header
+      // labels are documentation only: the reader maps each ion to a data column by
+      // position (first data column = neutral), so the labels are never parsed.
       // All files share the same T grid (101 log-spaced points from 1e3 to 1e9 K).
       std::set<std::string> unique_elements;
       for( const std::string& ion : ions ) {
