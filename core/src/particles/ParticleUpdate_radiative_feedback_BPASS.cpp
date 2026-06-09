@@ -161,8 +161,9 @@ public:
     bpass_data_path ( configMap.getValue<std::string>(
                         "star_feedback", "bpass_data_path",
                         "/data/anatole/BPASS") ),
+    // TODO: Remove once seperate particle families
     star_birth_time_min( configMap.getValue_in_code_unit<Units::Time>(
-                           "star_feedback", "star_birth_time_min", "1 Myr") ),
+                           "star_feedback", "star_birth_time_min", "1.1 Myr") ),
     temp_metallicity( configMap.getValue<real_t>("star_feedback", "temp_metallicity", 1e-4) ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ),
     photon_rates    ( "BPASS_photon_rates",
@@ -308,6 +309,7 @@ public:
       // Stars are the only particles born after the simulation has run for a
       // while; everything older is dark matter / IC particles and contributes
       // no radiation.
+       // TODO: Remove once seperate particle families
       if (Pdata.at(iPart, IBIRTH) < star_birth_time_min) return;
 
       // BPASS metallicity grid (mass fraction)
