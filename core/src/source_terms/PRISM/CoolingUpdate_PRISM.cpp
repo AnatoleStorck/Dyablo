@@ -316,6 +316,9 @@ public:
     UserData::FieldAccessor Uin_rt = U.getAccessor(rt_fields);
     UserData::FieldAccessor Uout_rt = U.getAccessor(rt_fields);
 
+
+    UserData::FieldAccessor Uout_debug = U.getAccessor({{"PRISM_iter", 0}});
+
     // Create units
     // real_t XH = Units::XH().convert_to(Units::one());
 
@@ -351,9 +354,11 @@ public:
     Kokkos::Experimental::UniqueToken<exec_space> token;
     Kokkos::View<CompactIonData*> compact_data("PRISM_compact_data", token.size());
 
+    int max_iter_reached = 0;
+
     // ------ Call PRISM cooling update on each cell ------
-    foreach_cell.foreach_cell( "CoolingUpdate_PRISM", Uin.getShape(),
-      KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell ) {
+    foreach_cell.reduce_cell( "CoolingUpdate_PRISM", Uin.getShape(),
+      KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell, int& max_iter_reached_local ) {
         Kokkos::Experimental::AcquireUniqueToken<exec_space> slot(token);
         CompactIonData& n_and_ion_fracs_loc = compact_data(slot.value());
 
@@ -426,6 +431,8 @@ public:
           T_over_mu = 100;
         }
 
+        int total_iter_reached;
+
         rtz_solver.solve_chemistry_and_cooling(
           T_over_mu,
           metallicity,
@@ -439,8 +446,16 @@ public:
           out_mu,
           20'000,
           40'000,
+          total_iter_reached,
           flags
         );
+
+        Uout_debug.at(iCell, 0) = total_iter_reached;
+
+
+        if (total_iter_reached > max_iter_reached_local) {
+          max_iter_reached_local = total_iter_reached;
+        }
 
         // We don't yet want the gas to cool below 1e4 K
         if (relax) {
@@ -472,8 +487,11 @@ public:
 
         u = policy.primToCons(q);
         policy.setConsState(Uin, iCell, u);
-      }
+      },
+      Kokkos::Max<int>(max_iter_reached)
     );
+
+    scalar_data.set("PRISM_max_iterations_reached", max_iter_reached);
 
     Kokkos::fence(); // Make sure all updates are finished before stopping timer
     timers.get("CoolingUpdate_PRISM").stop();
