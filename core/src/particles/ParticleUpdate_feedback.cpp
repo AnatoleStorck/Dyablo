@@ -81,10 +81,7 @@ public:
     const real_t t = cosmology ? scalar_data.get<real_t>("time_physical") : scalar_data.get<real_t>("time");
     const real_t dt = scalar_data.get<real_t>("dt");
 
-    const real_t t_phys_yr = Units::supercomoving_to_physical<Units::Time>(
-      (t * Units::code_units().getUnit<Units::Time>()).convert_to(Units::yr()),
-      scalar_data.get<real_t>("aexp")
-    );
+    const real_t t_phys_yr = (t * Units::code_units().getUnit<Units::Time>()).convert_to(Units::yr());
 
     enum VarIndex {
       IRho, IE_tot, IRho_vx, IRho_vy, IRho_vz, IRho_Z, IRho_added,
@@ -151,11 +148,7 @@ public:
        // Remove once seperate particle families
       if (Pdata.at(iPart, IBIRTH) < star_birth_time_min) return;
 
-      // Age of the particle
-      real_t part_birth_time_phys_yr = Units::supercomoving_to_physical<Units::Time>(
-        (Pdata.at(iPart, IBIRTH) * code_time).convert_to(Units::yr()),
-        aexp
-      );
+      real_t part_birth_time_phys_yr = (Pdata.at(iPart, IBIRTH) * code_time).convert_to(Units::yr());
       real_t part_age_phys_yr = t_phys_yr - part_birth_time_phys_yr;
       if (part_age_phys_yr <= 0) // decide whether this is actually needed
         return;
