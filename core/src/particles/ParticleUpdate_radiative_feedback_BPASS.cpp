@@ -112,6 +112,19 @@ double integrate_photon_rate(
   size_t i_hi = n_wvls - 1;
   while (i_hi > 0 && wvls[i_hi] > hi_A) --i_hi;
 
+  // Degenerate case: both edges fall strictly inside one grid interval
+  // (i_hi == i_lo - 1, so there is no grid point between them). Integrate the
+  // single sub-interval [lo_A, hi_A] directly to avoid the left/right fragments
+  // overlapping and double-counting.
+  if (i_lo > i_hi) {
+    double dw = wvls[i_lo] - wvls[i_hi];
+    double f_lo = (lo_A - wvls[i_hi]) / dw;
+    double f_hi = (hi_A - wvls[i_hi]) / dw;
+    double p_lo = (1.0 - f_lo) * pdens(i_hi) + f_lo * pdens(i_lo);
+    double p_hi = (1.0 - f_hi) * pdens(i_hi) + f_hi * pdens(i_lo);
+    return 0.5 * (p_lo + p_hi) * (hi_A - lo_A);
+  }
+
   double sum = 0.0;
 
   // Left fragment: (lo_A, wvls[i_lo])
