@@ -429,7 +429,7 @@ public:
 
         if (T_over_mu < 2.72e0) {
           // pressure fix
-          T_over_mu = 1e4;
+          T_over_mu = 1e1;
         }
         if (T_over_mu > 1e9) {
           T_over_mu = 1e9;
