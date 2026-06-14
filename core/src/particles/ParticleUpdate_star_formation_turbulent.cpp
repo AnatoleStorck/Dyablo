@@ -140,6 +140,10 @@ SFProps compute_sf_props(
     const SFParams& p )
 {
   const auto size = cells.getCellSize( iCell );
+
+  // TODO: generalize to non-cubic cells (dx != dy != dz)
+  DYABLO_ASSERT_KOKKOS_DEBUG( size[IX] == size[IY] && (ndim == 2 || size[IX] == size[IZ]),
+    "ParticleUpdate_star_formation_turbulent only supports cubic cells, but cell size is " << size );
   const real_t dx = size[IX];   // octree cells are cubic : dx == dy == dz
 
   const auto qc = policy.consToPrim( policy.getConsState( Uin, iCell ) );
