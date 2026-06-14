@@ -134,6 +134,13 @@ public:
   void setMarkers( const Kokkos::View<int*>& oct_markers );
 
   /**
+   * Get a copy of the current refinement markers (one value per local octant).
+   * Returned in the default memory space so it can be combined with markers
+   * produced by refine conditions (e.g. to merge several conditions).
+   **/
+  Kokkos::View<int*> getMarkers() const;
+
+  /**
    * Coarsen and refine octants according to markers set with setMarker()
    * adapt() includes 2:1 balancing in the directions set with `balance_codim` in the constructor
    * NOTE : refining/coarsening octants by more than one level is not supported (yet?)
