@@ -44,7 +44,7 @@ set( plugins_src
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_TSC_move.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_TSC_density.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_star_formation.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_star_formation_alt.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_star_formation_turbulent.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_feedback.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_radiative_feedback.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_radiative_feedback_BPASS.cpp
