@@ -434,12 +434,24 @@ public:
     }
     m_scalar_data.set<real_t>("dt", 1.0); // Setting initial value for dt to avoid problems with MHD kernels
 
-    std::string refine_condition_id = configMap.getValue<std::string>("amr", "markers_kernel", "RefineCondition_second_derivative_error");
-    this->refine_condition = RefineConditionFactory::make_instance( refine_condition_id,
-      configMap,
-      m_foreach_cell,
-      timers
-    );
+    std::vector<std::string> refine_condition_ids = configMap.getValue<std::vector<std::string>>("amr", "markers_kernel", {"RefineCondition_second_derivative_error"});
+    DYABLO_ASSERT_HOST_RELEASE(refine_condition_ids.size() > 0, "markers_kernel should not be empty !");
+    if( refine_condition_ids.size() == 1 )
+    { // Single condition : instanciate it directly
+      this->refine_condition = RefineConditionFactory::make_instance( refine_condition_ids[0],
+        configMap,
+        m_foreach_cell,
+        timers
+      );
+    }
+    else
+    { // Several conditions : merge them with RefineCondition_multiple (it re-reads the list from amr/markers_kernel)
+      this->refine_condition = RefineConditionFactory::make_instance( "RefineCondition_multiple",
+        configMap,
+        m_foreach_cell,
+        timers
+      );
+    }
 
     std::string viscosity_updater_id = configMap.getValue<std::string>("viscosity", "update", "none");
     if (viscosity_updater_id != "none") {
@@ -536,7 +548,10 @@ public:
         for( const std::string& id : initial_conditions_ids )
           std::cout << "`" << id << "` ";
       std::cout << std::endl;
-      std::cout << "Refine condition   : " << refine_condition_id << std::endl;
+      std::cout << "Refine condition   : ";
+        for( const std::string& id : refine_condition_ids )
+          std::cout << "`" << id << "` ";
+        std::cout << std::endl;
       std::cout << "Compute dt         : ";
         for( const std::string& id : compute_dt_ids )
           std::cout << "`" << id << "` ";

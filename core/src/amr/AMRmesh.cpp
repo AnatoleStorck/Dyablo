@@ -1063,6 +1063,13 @@ void AMRmesh::setMarkers( const Kokkos::View<int*>& oct_markers )
   Kokkos::deep_copy( pdata->markers, oct_markers );
 }
 
+Kokkos::View<int*> AMRmesh::getMarkers() const
+{
+  Kokkos::View<int*> oct_markers( "AMRmesh::markers", pdata->markers.size() );
+  Kokkos::deep_copy( oct_markers, pdata->markers );
+  return oct_markers;
+}
+
 void AMRmesh::adapt()
 {
   const MpiComm& mpi_comm = this->getMpiComm();
