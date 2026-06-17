@@ -331,6 +331,8 @@ public:
 
     real_t dt_s = (dt * code_time).convert_to(Units::second());
 
+    const real_t gamma0 = this->policy_params.policy_params.gamma0;
+
     const std::array<int, MAX_ELEMENTS> &nions_and_molecules = this->nions_and_molecules;
     const std::array<int, MAX_ELEMENTS> &elems2passive = this->elems2passive;
     const std::array<int, MAX_ELEMENTS> &ions2passive = this->ions2passive;
@@ -366,9 +368,13 @@ public:
         ConsState u = policy.getConsState(Uin, iCell);
         PrimState q = policy.consToPrim(u);
 
+        real_t p_thermal = q.p;
+        if constexpr ( Policy::has_dual_energy() )
+          p_thermal = (gamma0 - 1.0) * u.e_int;
+
         // Initial state
         auto rho_physical = Units::supercomoving_to_physical<Units::Density>(q.rho, aexp) * code_density;
-        auto P_physical = Units::supercomoving_to_physical<Units::Pressure>(q.p, aexp) * code_pressure;
+        auto P_physical = Units::supercomoving_to_physical<Units::Pressure>(p_thermal, aexp) * code_pressure;
         // real_t rho = rho_physical.convert_to(mp_per_cc);
 
         // Compute T/µ
@@ -486,10 +492,12 @@ public:
           }
         }
 
-        // Recompute conservative variables
-        q.p = (out_T_over_mu * Units::Kelvin() * rho_physical / mp_over_kb).convert_to(code_pressure);
+        const real_t p_thermal_new = (out_T_over_mu * Units::Kelvin() * rho_physical / mp_over_kb).convert_to(code_pressure);
+        const real_t delta_e_int = (p_thermal_new - p_thermal) / (gamma0 - 1.0);
 
-        u = policy.primToCons(q);
+        u.e_tot += delta_e_int;
+        if constexpr ( Policy::has_dual_energy() )
+          u.e_int += delta_e_int;
         policy.setConsState(Uin, iCell, u);
       },
       Kokkos::Max<int>(max_iter_reached)
