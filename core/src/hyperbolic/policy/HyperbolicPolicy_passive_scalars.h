@@ -182,15 +182,33 @@ public:
   }
 
   KOKKOS_INLINE_FUNCTION
-  ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir ) const
+  ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir, real_t& ustar ) const
   {
-    real_t ustar = 0;
     ConsState flux = {BasePolicy::riemann_solver(qL, qR, dir, ustar)};
     auto &qref = (ustar > 0 ? qL : qR);
     for (int i=0; i < nscalars; ++i)
       flux.rho_scalar[i] = flux.rho * qref.rho_scalar[i];
     return flux;
   }
+
+  KOKKOS_INLINE_FUNCTION
+  ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir ) const
+  {
+    real_t ustar = 0;
+    return riemann_solver( qL, qR, dir, ustar );
+  }
+
+private:
+  template< typename T >
+  constexpr static auto detect_dual_energy(int) -> decltype(T::has_dual_energy())
+  { return T::has_dual_energy(); }
+  template< typename T >
+  constexpr static bool detect_dual_energy(...)
+  { return false; }
+public:
+  KOKKOS_INLINE_FUNCTION
+  constexpr static bool has_dual_energy()
+  { return detect_dual_energy<BasePolicy>(0); }
 
   KOKKOS_INLINE_FUNCTION
   PrimState compute_slope( PrimState qL, PrimState qC, PrimState qR, real_t dL, real_t dR) const
