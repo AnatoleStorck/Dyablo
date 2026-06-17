@@ -14,7 +14,7 @@ public:
   : foreach_cell(foreach_cell),
     c_rad( configMap.getValue_in_code_unit<Units::Velocity>("rad", "c_rad", "speedoflight") ),
     n_groups( configMap.getValue<int>("rad", "n_groups", 1) ),
-    wait_for_radiation(configMap.getValue<bool>("rad", "wait_for_radiation", false))
+    wait_for_radiation(configMap.getValue<bool>("dt", "wait_for_radiation", false))
   {
     real_t default_cfl = 0.5;
     if (configMap.hasValue("hydro", "cfl")) {
