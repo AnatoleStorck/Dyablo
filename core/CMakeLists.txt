@@ -33,7 +33,7 @@ option (Kokkos_ENABLE_SYCL   "enable Kokkos::SyCL backend" OFF)
 option (Kokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC "Use CudaMallocAsync for Kokkos allocations" OFF)
 set    (Kokkos_DIR "Kokkos installation directory or internal source" CACHE PATH ""  )
 set    (DYABLO_KOKKOS_COMPILE_FLAGS "" CACHE STRING "Compile flags Added to targets including Kokkos (nvccs -G goes here)"   )
-
+option (DYABLO_USE_FFT "Activate / want FFT" OFF)
 
 # Options not forwarded from superbuild
 option (DYABLO_BUILD_DOC  "Enable / disable documentation build" OFF)
@@ -67,6 +67,15 @@ else( DYABLO_USE_INTERNAL_KOKKOS )
     kokkos_check( OPTIONS CUDA_LAMBDA)
   endif()
 endif()
+
+if( DYABLO_USE_FFT )
+  FetchContent_Declare( kokkos_fft_external
+    SOURCE_DIR ${PROJECT_SOURCE_DIR}/../external/kokkos-fft
+  )
+  # Import kokkos targets
+  FetchContent_MakeAvailable(kokkos_fft_external)
+endif()
+
 
 # Check compiler version
 message( "Detected kokkos compiler : ${KOKKOS_CXX_COMPILER_ID} ${KOKKOS_CXX_COMPILER_VERSION}" )

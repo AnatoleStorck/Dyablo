@@ -56,6 +56,7 @@ set( plugins_src
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Photons_Beam.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Photons_Stromgren.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Ionization_Stromgren.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Turbulent_Forcing.cpp
 )
 
 set( ic_src
@@ -117,6 +118,11 @@ target_link_libraries( dyablo_core PUBLIC
     monitoring
     dl
 )
+
+if (DYABLO_USE_FFT)
+    target_link_libraries( dyablo_core PUBLIC KokkosFFT::fft)
+endif (DYABLO_USE_FFT)
+
 
 if (DYABLO_USE_MPI)
     target_link_libraries( dyablo_core PUBLIC mpiUtils)
