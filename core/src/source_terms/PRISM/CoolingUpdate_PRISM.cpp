@@ -142,7 +142,7 @@ namespace PRISM {
 
 namespace dyablo {
 constexpr bool constant_temperature = false;
-constexpr bool include_H2 = false;
+constexpr bool include_H2 = true;
 constexpr bool include_CO = false;
 constexpr bool rt_advect = true;
 constexpr bool include_self_shielding = true;

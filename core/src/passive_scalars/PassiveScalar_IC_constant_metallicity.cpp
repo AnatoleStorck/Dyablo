@@ -12,9 +12,21 @@ namespace dyablo{
 namespace {
   // Parse "xH_I" -> element="H", state=0 (Roman I = neutral = first data column)
   // Also accepts "H_I" without leading 'x'.
+  //
+  // Special case: molecular hydrogen "xH2" (or "H2") carries no Roman-numeral
+  // ionization state. It is stored as the third column (index 2) of the hydrogen
+  // CIE table, after H_I (neutral, col 0) and H_II (ionized, col 1).
   void parse_ion_name( const std::string& ion, std::string& element, int& state ) {
     size_t start = 0;
     if( !ion.empty() && ion[0] == 'x' ) start = 1;
+
+    // Molecular hydrogen: no underscore, maps to the third hydrogen column.
+    if( ion.compare(start, std::string::npos, "H2") == 0 ) {
+      element = "H";
+      state   = 2;
+      return;
+    }
+
     size_t us = ion.find('_', start);
     DYABLO_ASSERT_HOST_RELEASE( us != std::string::npos, "PassiveScalar_IC_constant_metallicity: malformed ion name '" << ion << "' (expected x<Elem>_<Roman>)" );
     element = ion.substr(start, us - start);
@@ -78,14 +90,17 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
       // Load CIE ionization-fraction tables for each unique element
       // ---------------------------------------------------------------
       // Each file ${data_path}/CIE_init/cie_<Elem>.dat has the format:
-      //   # T_K Elem1 Elem2 ...
-      //   T1   f1   f2   ...
-      //   T2   f1   f2   ...
+      //   # T_K Elem_1 Elem_2 ...
+      //   T1   f1     f2     ...
+      //   T2   f1     f2     ...
       //   ...
-      // Ionization states are 1-indexed in the header (Elem1 = neutral, e.g. H1 = HI),
+      // Ionization states are 1-indexed in the header (Elem_1 = neutral, e.g. H_1 = HI),
       // matching the Roman-numeral convention of the ion names (xH_I = HI). The header
       // labels are documentation only: the reader maps each ion to a data column by
       // position (first data column = neutral), so the labels are never parsed.
+      // Molecular hydrogen, when present, is the third hydrogen column (H2, after H_1
+      // and H_2) and is requested via the ion name "xH2"; it is simply skipped when not
+      // listed in the ions.
       // All files share the same T grid (101 log-spaced points from 1e3 to 1e9 K).
       std::set<std::string> unique_elements;
       for( const std::string& ion : ions ) {
