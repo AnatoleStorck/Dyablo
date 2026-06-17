@@ -40,6 +40,8 @@ option (Kokkos_ENABLE_HIP "Enable Kokkos::HIP backend" OFF)
 set( Kokkos_ARCH  "" CACHE STRING "List of architectures to set for Kokkos : -DKokkos_ARCH_<arch>=ON")
 set( DYABLO_CMAKE_ARGS "" CACHE STRING "Additional cmake command line arguments to forward to Dyablo subproject"  )
 
+option (DYABLO_USE_FFT "Activate / want FFT" OFF)
+
 include (ExternalProject)
 set (DYABLO_EXTERNALPROJECT_DEPENDENCIES)
 set (DYABLO_CMAKE_ARGS_ ${DYABLO_CMAKE_ARGS})
@@ -99,6 +101,7 @@ list (APPEND DYABLO_CMAKE_ARGS_
   -DDYABLO_USE_MPI_CUDA_AWARE_ENFORCED=${DYABLO_USE_MPI_CUDA_AWARE_ENFORCED}
   -DDYABLO_USE_PRISM=${DYABLO_USE_PRISM}
   -DDYABLO_USE_INTERNAL_KOKKOS=${DYABLO_USE_INTERNAL_KOKKOS}
+  -DDYABLO_USE_FFT=${DYABLO_USE_FFT}
   -DKokkos_ENABLE_CUDA=${Kokkos_ENABLE_CUDA}
   -DKokkos_ENABLE_SYCL=${Kokkos_ENABLE_SYCL}
   -DKokkos_ENABLE_HIP=${Kokkos_ENABLE_HIP}

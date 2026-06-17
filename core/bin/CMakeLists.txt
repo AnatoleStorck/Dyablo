@@ -19,6 +19,13 @@ if (DYABLO_USE_MPI)
   target_link_libraries(${EXE_NAME} mpiUtils)
 endif()
 
+
+if (DYABLO_USE_FFT)
+  message( STATUS "Enabling FFT support" )
+  target_link_libraries(${EXE_NAME} KokkosFFT::fft)
+endif()
+
+
 add_backward(${EXE_NAME})
 
 # Files for gitlab-ci testcases
