@@ -191,8 +191,6 @@ private:
 
   RTZ_type rtz_solver;
 
-  bool relax;
-
 public:
   using PrimState = typename Policy::PrimState;
   using ConsState = typename Policy::ConsState;
@@ -241,8 +239,6 @@ public:
     rtz_solver.need_to_update_cross_sections(T_blackbody);
     timers.get("CoolingUpdate_PRISM:cross_section").stop();
 
-    // If in relaxation mode
-    relax             = configMap.getValue<bool>("cooling", "relaxing", false);
   };
 
   void update( UserData &U,
@@ -338,8 +334,6 @@ public:
     const std::array<int, MAX_ELEMENTS> &ions2passive = this->ions2passive;
     // const int n_groups = this->n_groups;
     const RTZ_type& rtz_solver = this->rtz_solver;
-
-    const bool relax = this->relax;
 
     timers.get("CoolingUpdate_PRISM").start();
 
@@ -465,13 +459,6 @@ public:
 
         if (total_iter_reached > max_iter_reached_local) {
           max_iter_reached_local = total_iter_reached;
-        }
-
-        // We don't yet want the gas to cool below 1e4 K
-        if (relax) {
-          if (out_T_over_mu < 1e4) {
-        out_T_over_mu = 1e4;
-          }
         }
 
         // Write back element number densities and ion fractions
