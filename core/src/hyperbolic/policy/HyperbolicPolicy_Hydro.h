@@ -19,11 +19,11 @@ struct HyperbolicPolicy_ConsHydroState {
     Irho_vx,
     Irho_vy,
     Irho_vz
-  }; 
+  };
 
   static std::vector<UserData::FieldAccessor::FieldInfo> getFieldsInfo()
   {
-    return  { {"rho",     VarIndex::Irho}, 
+    return  { {"rho",     VarIndex::Irho},
       {"e_tot",   VarIndex::Ie_tot},
       {"e_int",   VarIndex::Ie_int},
       {"rho_vx",  VarIndex::Irho_vx},
@@ -193,8 +193,8 @@ public:
     const real_t Ek = 0.5 * (U.rho_u*U.rho_u+U.rho_v*U.rho_v+U.rho_w*U.rho_w)/U.rho;
     const real_t p = (U.e_tot - Ek) * (gamma0-1.0);
     const real_t inv_rho = (U.rho != 0 ? 1.0/U.rho : 0.0);
-    return {U.rho, 
-            p, 
+    return {U.rho,
+            p,
             U.e_int * inv_rho,
             U.rho_u * inv_rho,
             U.rho_v * inv_rho,
@@ -208,11 +208,11 @@ public:
 
     const real_t Ek = 0.5 * Q.rho * (Q.u*Q.u+Q.v*Q.v+Q.w*Q.w);
     const real_t E  = Ek + Q.p / (gamma0-1.0);
-    return {Q.rho, 
-            E, 
+    return {Q.rho,
+            E,
             Q.rho*Q.eint,
-            Q.rho*Q.u, 
-            Q.rho*Q.v, 
+            Q.rho*Q.u,
+            Q.rho*Q.v,
             (ndim ==3 ? Q.rho*Q.w : 0.0)};
   }
 };
@@ -504,8 +504,8 @@ public:
     {
       if( negative_rho_count() > 0 )
         Kokkos::printf( "Negative density detected\n");
-      if( negative_p_count() > 0 )
-        Kokkos::printf( "Negative pressure detected\n" );
+      // if( negative_p_count() > 0 )
+      //   Kokkos::printf( "Negative pressure detected\n" );
     });
   }
 };
