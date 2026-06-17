@@ -186,6 +186,15 @@ public:
     return impl.riemann_solver(qL, qR, dir);
   }
 
+  /**
+   * @brief If dual-energy, need ustar to evaluate the P div(u) source term.
+   */
+  KOKKOS_INLINE_FUNCTION
+  ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir, real_t& ustar) const
+  {
+    return impl.riemann_solver(qL, qR, dir, ustar);
+  }
+
   
   KOKKOS_INLINE_FUNCTION
   PrimState compute_slope( PrimState qL, PrimState qC, PrimState qR, real_t dL, real_t dR) const
@@ -242,6 +251,18 @@ public:
   KOKKOS_INLINE_FUNCTION
   constexpr static bool has_postProcess()
   {return HyperbolicPolicy_impl::has_postProcess();}
+
+private:
+  template< typename T >
+  constexpr static auto detect_dual_energy(int) -> decltype(T::has_dual_energy())
+  { return T::has_dual_energy(); }
+  template< typename T >
+  constexpr static bool detect_dual_energy(...)
+  { return false; }
+public:
+  KOKKOS_INLINE_FUNCTION
+  constexpr static bool has_dual_energy()
+  {return detect_dual_energy<HyperbolicPolicy_impl>(0);}
 
   /**
    * @brief Add a post-processing step after the solver

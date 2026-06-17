@@ -51,9 +51,12 @@ public:
     timers(timers),
     policy_params(Policy::getParams(configMap)),
     ndim(configMap.getValue<int>("mesh", "ndim", 3)),
+    gamma0( configMap.getValue<real_t>("hydro","gamma0", 1.4) ),
     smallr( configMap.getValue<real_t>("hydro","smallr", 1e-10) ),
     smallp( configMap.getValue<real_t>("hydro","smallp", 1e-10) ),
-    slope_enabled( configMap.getValue<bool>("hydro","slope_enabled", true) )
+    slope_enabled( configMap.getValue<bool>("hydro","slope_enabled", true) ),
+    dual_energy( configMap.getValue<bool>("hydro","dual_energy", false) ),
+    dual_energy_eta( configMap.getValue<real_t>("hydro","dual_energy_eta", 0.5) )
   { }
 
   /**
@@ -67,6 +70,10 @@ public:
     real_t dt = scalar_data.get<real_t>("dt");
     int ndim = this->ndim;
     bool slope_enabled = this->slope_enabled;
+    bool dual_energy = this->dual_energy;
+    real_t dual_energy_eta = this->dual_energy_eta;
+    real_t gamma0 = this->gamma0;
+    real_t smallp = this->smallp;
 
     const Policy policy( this->policy_params, scalar_data ); 
     Timers& timers = this->timers; 
@@ -167,6 +174,16 @@ public:
           return slope;
         }; // get_slope
 
+        auto normal_component = [](const auto &q, ComponentIndex3D dir) -> real_t {
+          return dir==IX ? q.u : (dir==IY ? q.v : q.w);
+        };
+        // Also return contact velocity for dual-energy
+        auto solve_riemann = [&](const PrimState &a, const PrimState &b, ComponentIndex3D dir, real_t &ustar) {
+          if constexpr ( Policy::has_dual_energy() )
+            return policy.riemann_solver(a, b, dir, ustar);
+          else
+            return policy.riemann_solver(a, b, dir);
+        };
 
         auto process_dir = [&](const CellIndex &iCell_Uin, const CellIndex &iCell_Qpatch, ComponentIndex3D dir) {
           // Getting centered value and slope
@@ -175,13 +192,16 @@ public:
           real_t size_C = cellmetadata.getCellSize(iCell_Uin)[dir];
 
           real_t dim_fac = (ndim == 2 ? 0.5 : 0.25);
-  
+          real_t ustarL = 0, ustarR = 0;
+
           // Compute left side flux
           ConsState fluxL {};
           {
             PrimState qC = qC0 - 0.5 * slope_C;
+            if constexpr ( Policy::has_dual_energy() )
+              ustarL = normal_component(qC, dir); // fallback (boundary / finer neighbor faces)
 
-            offset_t off_m{}; 
+            offset_t off_m{};
             off_m[dir] = -1;
             const CellIndex iCell_Uin_m = iCell_Uin.getNeighbor(off_m, search_neighbor);
             if( iCell_Uin_m.is_boundary() )
@@ -189,9 +209,9 @@ public:
               fluxL = policy.getBoundaryFlux(Uin, iCell_Uin_m, qC, cellmetadata);
             }
             else
-            {  
+            {
               int Ldiff = iCell_Uin_m.level_diff();
-              if (Ldiff >= 0) 
+              if (Ldiff >= 0)
               {
                 CellIndex iCell_Qpatch_m = iCell_Qpatch + off_m;
                 PrimState qL0 = policy.getPrimState( Qpatch, iCell_Qpatch_m );
@@ -202,10 +222,10 @@ public:
                 PrimState qL = qL0 + 0.5 * slope_L;
 
                 // Solving
-                fluxL = policy.riemann_solver(qL, qC, dir);
-                
+                fluxL = solve_riemann(qL, qC, dir, ustarL);
+
                 // Adding flux to the neighbor if it is bigger
-                if (Ldiff == 1) 
+                if (Ldiff == 1)
                 {
                   ConsState du_n = fluxL * - dim_fac * dt / size_L;
                   policy.atomic_addConsState(Uout, iCell_Uin_m, du_n);
@@ -216,10 +236,12 @@ public:
 
           // Compute right side flux
           ConsState fluxR {};
-          {      
+          {
             PrimState qC = qC0 + 0.5 * slope_C;
+            if constexpr ( Policy::has_dual_energy() )
+              ustarR = normal_component(qC, dir); // fallback (boundary / finer neighbor faces)
 
-            offset_t off_p{}; 
+            offset_t off_p{};
             off_p[dir] = 1;
             const CellIndex iCell_Uin_p = iCell_Uin.getNeighbor(off_p, search_neighbor);
             if( iCell_Uin_p.is_boundary() )
@@ -229,7 +251,7 @@ public:
             else
             {
               int Rdiff = iCell_Uin_p.level_diff();
-              if (Rdiff >= 0) 
+              if (Rdiff >= 0)
               {
                 CellIndex iCell_Qpatch_p = iCell_Qpatch + off_p;
                 PrimState qR0 = policy.getPrimState( Qpatch, iCell_Qpatch_p );
@@ -240,19 +262,25 @@ public:
                 PrimState qR = qR0 - 0.5 * slope_R;
 
                 // Solving
-                fluxR = policy.riemann_solver(qC, qR, dir);
+                fluxR = solve_riemann(qC, qR, dir, ustarR);
 
                 // Adding flux to the neighbor if it is bigger
                 if (Rdiff == 1)
                 {
                   ConsState du_n = fluxR * dim_fac * dt / size_R;
                   policy.atomic_addConsState(Uout, iCell_Uin_p, du_n);
-                }          
+                }
               }
             }
-          } 
+          }
 
           ConsState du = (fluxL-fluxR) * dt / size_C;
+          // Add the non-conservative source term -P div(u) * dt.
+          if constexpr ( Policy::has_dual_energy() )
+          {
+            if( dual_energy )
+              du.e_int -= qC0.p * (ustarR - ustarL) * dt / size_C;
+          }
           return du;
         };
 
@@ -277,7 +305,82 @@ public:
       ghost_count );
     ghost_comm.reduce_ghosts( Uout );
     
-    if constexpr ( Policy::has_postProcess() )
+    if constexpr ( Policy::has_dual_energy() )
+    {
+      // Dual-energy finalization (Teyssier 2015, sec. 6.6) :
+      //  - e_cons  = E_tot - E_kin  (conservative internal energy, large truncation error
+      //              in cold supersonic flows but reproduces shock/reconnection heating)
+      //  - e_prim  = the non-conservatively-evolved internal energy carried in e_int
+      //  - e_trunc = 0.5 rho (du)^2 estimate of the local truncation error (eq. 158)
+      // Pick e_cons when it exceeds eta * e_trunc, otherwise keep e_prim and reset E_tot
+      foreach_cell.foreach_cell( "HyperbolicUpdate_euler::dual_energy_finalize", Uout.getShape(),
+        KOKKOS_LAMBDA(  const ForeachCell::CellIndex& iCell)
+      {
+        ConsState u = policy.getConsState(Uout, iCell);
+        if constexpr ( Policy::has_postProcess() )
+          u = policy.postProcess( u );
+
+        const real_t inv_rho = (u.rho != 0 ? 1.0/u.rho : 0.0);
+        const real_t ekin = 0.5 * (u.rho_u*u.rho_u + u.rho_v*u.rho_v + u.rho_w*u.rho_w) * inv_rho;
+        const real_t e_cons = u.e_tot - ekin;
+        const real_t e_int_min = smallp / (gamma0 - 1.0);
+
+        real_t e_final;
+        if( dual_energy ) { // Do the truncation error estimate
+
+          ForeachCell::SearchMode_neighbor search_neighbor( cellmetadata.getLightOctree(), ForeachCell::SearchMode_neighbor::CLOSEST );
+          auto vel_comp = [&]( const ConsState& s, ComponentIndex3D dir ) -> real_t {
+            const real_t ir = (s.rho != 0 ? 1.0/s.rho : 0.0);
+            return (dir==IX ? s.rho_u : (dir==IY ? s.rho_v : s.rho_w)) * ir;
+          };
+
+          const ConsState u_old = policy.getConsState(Uin, iCell);
+          const real_t rho_old = u_old.rho;
+
+          real_t du2 = 0;
+          auto accumulate_dir = [&]( ComponentIndex3D dir ) {
+            const real_t vC = vel_comp(u_old, dir);
+            offset_t off_m{}; off_m[dir] = -1;
+            offset_t off_p{}; off_p[dir] =  1;
+            const CellIndex iCell_m = iCell.getNeighbor(off_m, search_neighbor);
+            const CellIndex iCell_p = iCell.getNeighbor(off_p, search_neighbor);
+            real_t dm = 0, dp = 0;
+            if( !iCell_m.is_boundary() )
+              dm = fabs( vC - vel_comp(policy.getConsState(Uin, iCell_m), dir) );
+            if( !iCell_p.is_boundary() )
+              dp = fabs( vel_comp(policy.getConsState(Uin, iCell_p), dir) - vC );
+            const real_t du = fmax(dm, dp);
+            du2 += du*du;
+          };
+          accumulate_dir(IX);
+          accumulate_dir(IY);
+          if( ndim == 3 )
+            accumulate_dir(IZ);
+
+          const real_t e_trunc = 0.5 * rho_old * du2;
+
+          if( e_cons > dual_energy_eta * e_trunc )
+          {
+            // Conservative branch : trust E_tot (shocks, reconnection layers, smooth flow).
+            e_final = fmax(e_cons, e_int_min);
+          }
+          else
+          {
+            // Non-conservative branch : keep e_prim and reset E_tot = E_kin + e_prim.
+            e_final = fmax(u.e_int, e_int_min);
+            u.e_tot = ekin + e_final;
+          }
+        }
+        else {
+          // Dual energy disabled
+          e_final = fmax(e_cons, e_int_min);
+        }
+
+        u.e_int = e_final;
+        policy.setConsState( Uout, iCell, u );
+      });
+    }
+    else if constexpr ( Policy::has_postProcess() )
     {
       foreach_cell.foreach_cell( "HyperbolicUpdate::post-process", Uout.getShape(),
         KOKKOS_LAMBDA(  const ForeachCell::CellIndex& iCell)
@@ -287,7 +390,7 @@ public:
         policy.setConsState( Uout, iCell, u_pp );
       });
     }
-    
+
     policy.printWarnings();
 
     Kokkos::fence();
@@ -301,8 +404,11 @@ protected:
   typename Policy::Params policy_params;
 
   int ndim;
+  real_t gamma0;
   real_t smallr, smallp;
   bool slope_enabled;
+  bool dual_energy;
+  real_t dual_energy_eta;
 };
 
 } // namespace dyablo

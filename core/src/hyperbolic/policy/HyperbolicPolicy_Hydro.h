@@ -15,6 +15,7 @@ struct HyperbolicPolicy_ConsHydroState {
   {
     Irho,
     Ie_tot,
+    Ie_int,
     Irho_vx,
     Irho_vy,
     Irho_vz
@@ -24,6 +25,7 @@ struct HyperbolicPolicy_ConsHydroState {
   {
     return  { {"rho",     VarIndex::Irho}, 
       {"e_tot",   VarIndex::Ie_tot},
+      {"e_int",   VarIndex::Ie_int},
       {"rho_vx",  VarIndex::Irho_vx},
       {"rho_vy",  VarIndex::Irho_vy},
       {"rho_vz",  VarIndex::Irho_vz} };
@@ -31,12 +33,13 @@ struct HyperbolicPolicy_ConsHydroState {
 
   real_t rho = 0;
   real_t e_tot = 0;
+  real_t e_int = 0;
   real_t rho_u = 0;
   real_t rho_v = 0;
   real_t rho_w = 0;
 };
 
-DECLARE_STATE_TYPE( HyperbolicPolicy_ConsHydroState, 5 );
+DECLARE_STATE_TYPE( HyperbolicPolicy_ConsHydroState, 6 );
 
 /**
  * @brief Structure holding primitive hydrodynamics variables
@@ -46,6 +49,7 @@ struct HyperbolicPolicy_PrimHydroState {
   {
     Irho,
     Ip,
+    Ie_int,
     Iu,
     Iv,
     Iw
@@ -53,12 +57,13 @@ struct HyperbolicPolicy_PrimHydroState {
 
   real_t rho = 0;
   real_t p = 0;
+  real_t eint = 0;
   real_t u = 0;
   real_t v = 0;
   real_t w = 0;
 };
 
-DECLARE_STATE_TYPE( HyperbolicPolicy_PrimHydroState, 5 );
+DECLARE_STATE_TYPE( HyperbolicPolicy_PrimHydroState, 6 );
 struct HyperbolicPolicy_Hydro_Params
 {
   static HyperbolicPolicy_Hydro_Params from_configMap( ConfigMap& configMap )
@@ -120,6 +125,7 @@ public:
     ConsState u;
     u.rho   = U.at(iCell, ConsState::VarIndex::Irho );
     u.e_tot = U.at(iCell, ConsState::VarIndex::Ie_tot );
+    u.e_int = U.at(iCell, ConsState::VarIndex::Ie_int );
     u.rho_u = U.at(iCell, ConsState::VarIndex::Irho_vx );
     u.rho_v = U.at(iCell, ConsState::VarIndex::Irho_vy );
     u.rho_w = (ndim == 3 ? U.at(iCell, ConsState::VarIndex::Irho_vz ) : 0.0);
@@ -132,6 +138,7 @@ public:
   {
     U.at(iCell, ConsState::VarIndex::Irho) = u.rho;
     U.at(iCell, ConsState::VarIndex::Ie_tot) = u.e_tot;
+    U.at(iCell, ConsState::VarIndex::Ie_int) = u.e_int;
     U.at(iCell, ConsState::VarIndex::Irho_vx) = u.rho_u;
     U.at(iCell, ConsState::VarIndex::Irho_vy) = u.rho_v;
     if (ndim == 3)
@@ -144,6 +151,7 @@ public:
   {
     Kokkos::atomic_add(&U.at(iCell, ConsState::VarIndex::Irho), u.rho);
     Kokkos::atomic_add(&U.at(iCell, ConsState::VarIndex::Ie_tot), u.e_tot);
+    Kokkos::atomic_add(&U.at(iCell, ConsState::VarIndex::Ie_int), u.e_int);
     Kokkos::atomic_add(&U.at(iCell, ConsState::VarIndex::Irho_vx), u.rho_u);
     Kokkos::atomic_add(&U.at(iCell, ConsState::VarIndex::Irho_vy), u.rho_v);
     if (ndim == 3)
@@ -155,11 +163,12 @@ public:
   PrimState getPrimState( const Array_t& Q, const CellIndex& iCell ) const
   {
     PrimState q;
-    q.rho = Q.at(iCell, PrimState::VarIndex::Irho );
-    q.p   = Q.at(iCell, PrimState::VarIndex::Ip );
-    q.u   = Q.at(iCell, PrimState::VarIndex::Iu );
-    q.v   = Q.at(iCell, PrimState::VarIndex::Iv );
-    q.w   = (ndim == 3 ? Q.at(iCell, PrimState::VarIndex::Iw ) : 0.0);
+    q.rho  = Q.at(iCell, PrimState::VarIndex::Irho );
+    q.p    = Q.at(iCell, PrimState::VarIndex::Ip );
+    q.eint = Q.at(iCell, PrimState::VarIndex::Ie_int );
+    q.u    = Q.at(iCell, PrimState::VarIndex::Iu );
+    q.v    = Q.at(iCell, PrimState::VarIndex::Iv );
+    q.w    = (ndim == 3 ? Q.at(iCell, PrimState::VarIndex::Iw ) : 0.0);
     return q;
   }
 
@@ -169,6 +178,7 @@ public:
   {
     Q.at(iCell, PrimState::VarIndex::Irho) = q.rho;
     Q.at(iCell, PrimState::VarIndex::Ip) = q.p;
+    Q.at(iCell, PrimState::VarIndex::Ie_int) = q.eint;
     Q.at(iCell, PrimState::VarIndex::Iu) = q.u;
     Q.at(iCell, PrimState::VarIndex::Iv) = q.v;
     if (ndim == 3)
@@ -182,11 +192,13 @@ public:
 
     const real_t Ek = 0.5 * (U.rho_u*U.rho_u+U.rho_v*U.rho_v+U.rho_w*U.rho_w)/U.rho;
     const real_t p = (U.e_tot - Ek) * (gamma0-1.0);
+    const real_t inv_rho = (U.rho != 0 ? 1.0/U.rho : 0.0);
     return {U.rho, 
             p, 
-            U.rho_u/U.rho, 
-            U.rho_v/U.rho, 
-            (ndim == 3 ? U.rho_w/U.rho : 0.0)};
+            U.e_int * inv_rho,
+            U.rho_u * inv_rho,
+            U.rho_v * inv_rho,
+            (ndim == 3 ? U.rho_w * inv_rho : 0.0)};
   }
 
   KOKKOS_INLINE_FUNCTION
@@ -198,6 +210,7 @@ public:
     const real_t E  = Ek + Q.p / (gamma0-1.0);
     return {Q.rho, 
             E, 
+            Q.rho*Q.eint,
             Q.rho*Q.u, 
             Q.rho*Q.v, 
             (ndim ==3 ? Q.rho*Q.w : 0.0)};
@@ -229,7 +242,7 @@ public:
     })
   {}
 
-protected:
+public:
   KOKKOS_INLINE_FUNCTION
   ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir, real_t& ustar ) const
   {
@@ -240,7 +253,6 @@ protected:
     return flux;
   }
 
-public:
   KOKKOS_INLINE_FUNCTION
   ConsState riemann_solver( PrimState qL, PrimState qR, ComponentIndex3D dir ) const
   {
@@ -258,9 +270,9 @@ private:
       case IX:
         return q;
       case IY:
-        return PrimState{q.rho, q.p, q.v, q.u, q.w};
+        return PrimState{q.rho, q.p, q.eint, q.v, q.u, q.w};
       case IZ:
-        return PrimState{q.rho, q.p, q.w, q.v, q.u};
+        return PrimState{q.rho, q.p, q.eint, q.w, q.v, q.u};
       default:
         DYABLO_ASSERT_KOKKOS_DEBUG(false, "invalid component");
         return PrimState{};
@@ -275,9 +287,9 @@ private:
       case IX:
         return u;
       case IY:
-        return ConsState{u.rho, u.e_tot, u.rho_v, u.rho_u, u.rho_w};
+        return ConsState{u.rho, u.e_tot, u.e_int, u.rho_v, u.rho_u, u.rho_w};
       case IZ:
-        return ConsState{u.rho, u.e_tot, u.rho_w, u.rho_v, u.rho_u};
+        return ConsState{u.rho, u.e_tot, u.e_int, u.rho_w, u.rho_v, u.rho_u};
       default:
         DYABLO_ASSERT_KOKKOS_DEBUG(false, "invalid component");
         return ConsState{};
@@ -378,9 +390,11 @@ private:
     if (flux.rho > 0) {
       flux.rho_v = flux.rho*qleft.v;
       flux.rho_w = flux.rho*qleft.w;
+      flux.e_int = flux.rho*qleft.eint;   // advective flux of internal energy (dual energy)
     } else {
       flux.rho_v = flux.rho*qright.v;
       flux.rho_w = flux.rho*qright.w;
+      flux.e_int = flux.rho*qright.eint;
     }
 
     return flux;
@@ -452,6 +466,9 @@ private:
 public:
   KOKKOS_INLINE_FUNCTION
   constexpr static bool has_postProcess()
+  {return true;}
+  KOKKOS_INLINE_FUNCTION
+  constexpr static bool has_dual_energy()
   {return true;}
 
   KOKKOS_INLINE_FUNCTION
