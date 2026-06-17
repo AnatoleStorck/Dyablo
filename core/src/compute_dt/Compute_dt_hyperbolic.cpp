@@ -32,6 +32,13 @@ public:
     }
     this->cfl = configMap.getValue<real_t>("dt", "hydro_cfl", default_cfl);
 
+    // Floors used to keep the signal speed well-defined : without them a cell with a
+    // (truncation/cancellation induced) negative pressure gives cs = sqrt(<0) = NaN,
+    // which FMAX silently drops from the CFL reduction -> that cell gets no timestep
+    // limit lol
+    this->smallr = configMap.getValue<real_t>("hydro", "smallr", 1e-10);
+    this->smallp = configMap.getValue<real_t>("hydro", "smallp", 1e-10);
+
     // Verify dt_mhd is enabled if hydro update uses MHD
     // ( "Compute_dt_hydro" used to support MHD and may still be used in outdated .inis )
     bool has_mhd = configMap.getValue<std::string>("hydro", "update", "HydroUpdate_euler").find("MHD") != std::string::npos;
@@ -68,6 +75,8 @@ public:
 
     int ndim = foreach_cell.getDim();
     real_t gamma0 = policy_params.policy_params.gamma0;
+    const real_t smallr = this->smallr;
+    const real_t smallp = this->smallp;
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
@@ -85,7 +94,9 @@ public:
       ConsState uLoc = policy.getConsState(Uin, iCell);
       PrimState qLoc = policy.consToPrim(uLoc);
 
-      const real_t cs = sqrt(qLoc.p * gamma0 / qLoc.rho);
+      const real_t rho = FMAX(qLoc.rho, smallr);
+      const real_t p   = FMAX(qLoc.p,   smallp);
+      const real_t cs = sqrt(p * gamma0 / rho);
 
       real_t vx = cs + FABS(qLoc.u);
       real_t vy = cs + FABS(qLoc.v);
@@ -98,7 +109,7 @@ public:
         const real_t Bx = qLoc.Bx;
         const real_t By = qLoc.By;
         const real_t Bz = qLoc.Bz;
-        const real_t gr = cs*cs*qLoc.rho;
+        const real_t gr = cs*cs*rho;
         const real_t Bt2 [] = {By*By+Bz*Bz,
                                Bx*Bx+Bz*Bz,
                                Bx*Bx+By*By};
@@ -110,7 +121,7 @@ public:
         real_t cmax = 0.0;
         for (int i=0; i < ndim; ++i) {
           const real_t cf2 = gr + B2 + sqrt(cf1*cf1 + 4.0*gr*Bt2[i]);
-          const real_t cf = sqrt(0.5 * cf2 / qLoc.rho);
+          const real_t cf = sqrt(0.5 * cf2 / rho);
 
           cmax += (cf + Kokkos::abs(V[i])) / D[i];
         }
@@ -129,6 +140,7 @@ private:
   typename Policy::Params policy_params;
 
   real_t cfl;
+  real_t smallr, smallp;
 };
 
 class Compute_dt_hydro : public Compute_dt_hyperbolic<HyperbolicPolicy_Hydro> {
