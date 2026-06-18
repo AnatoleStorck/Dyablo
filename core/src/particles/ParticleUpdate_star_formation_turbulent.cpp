@@ -294,8 +294,8 @@ public:
       return rhoc * omegam * Delta;
     }()),
     gamma0          ( configMap.getValue<real_t>("hydro", "gamma0", 1.4) ),
-    n_passive_scalars( configMap.getValue<int>("run", "n_passive_scalars",
-        configMap.getValue<std::vector<std::string>>("run", "passive_scalars_names", {}).size()) ),
+    n_passive_scalars( configMap.getValue<int>("passive_scalars", "n_passive_scalars",
+        configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", {}).size()) ),
     seed            ( 100 ),
     rand_pool       ( seed*GlobalMpiSession::get_comm_world().MPI_Comm_rank()+1)
   {}

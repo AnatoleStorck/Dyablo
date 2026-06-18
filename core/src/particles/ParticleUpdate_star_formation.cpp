@@ -91,8 +91,8 @@ public:
       return rhoc * omegam * Delta;
     }()),
     epsilon_star    ( configMap.getValue<real_t>("star_formation", "epsilon_star") ),
-    n_passive_scalars( configMap.getValue<int>("run", "n_passive_scalars",
-        configMap.getValue<std::vector<std::string>>("run", "passive_scalars_names", {}).size()) ),
+    n_passive_scalars( configMap.getValue<int>("passive_scalars", "n_passive_scalars",
+        configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", {}).size()) ),
     seed            ( 100 ),
     rand_pool       ( seed*GlobalMpiSession::get_comm_world().MPI_Comm_rank()+1)
   {
