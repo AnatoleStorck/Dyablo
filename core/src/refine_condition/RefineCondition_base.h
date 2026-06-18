@@ -23,6 +23,9 @@ public:
   //               Timers& timers );
   virtual ~RefineCondition(){}
   virtual void mark_cells( UserData& U, ScalarSimulationData& scalar_data) = 0;
+
+  /// Used for mask conditions
+  virtual bool is_refinement_mask() const { return false; }
 };
 
 using RefineConditionFactory = RegisteringFactory< RefineCondition, 

@@ -41,6 +41,14 @@ public:
         timers
       ));
     }
+
+    bool has_additive = false;
+    for( const auto& condition : conditions )
+      if( !condition->is_refinement_mask() )
+        has_additive = true;
+    DYABLO_ASSERT_HOST_RELEASE( has_additive,
+      "amr/markers_kernel must contain at least one non-mask refine condition "
+      "(mask conditions such as RefineCondition_passive_scalar only veto refinement)" );
   }
 
   void mark_cells( UserData& U, ScalarSimulationData& scalar_data ) override
@@ -54,6 +62,9 @@ public:
 
     for( auto& condition : conditions )
     {
+      if( condition->is_refinement_mask() )
+        continue;
+
       // Each condition writes its markers into the mesh ; read them back and merge.
       condition->mark_cells( U, scalar_data );
       Kokkos::View<int*> markers = pmesh.getMarkers();
@@ -67,6 +78,13 @@ public:
     }
 
     RefineCondition_utils::set_markers( pmesh, combined_markers );
+
+    // Mask pass
+    for( auto& condition : conditions )
+    {
+      if( condition->is_refinement_mask() )
+        condition->mark_cells( U, scalar_data );
+    }
   }
 
 private:
