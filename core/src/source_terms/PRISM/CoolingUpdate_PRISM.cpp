@@ -427,12 +427,10 @@ public:
         double Z = (12*nC + 16*nO) / (nH + 4*nHe + 12*nC + 16*nO);
         metallicity = Z / 0.0139; // is taken relative to solar
 
-        if (T_over_mu < 2.72e0) {
-          // pressure fix
-          T_over_mu = 1e1;
-        }
-        if (T_over_mu > 1e9) {
-          T_over_mu = 1e9;
+        if (T_over_mu < 2.727e0) {
+          // Can't have gas cool below the CMB temperature floor, and
+          // it will alsonheavily slow down the chemistry solver
+          T_over_mu = 2.727e0;
         }
 
         int total_iter_reached;
