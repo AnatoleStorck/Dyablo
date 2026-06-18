@@ -36,6 +36,7 @@ set( plugins_src
     ${CMAKE_CURRENT_SOURCE_DIR}/refine_condition/RefineCondition_downflows.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/refine_condition/RefineCondition_multiple.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/refine_condition/RefineCondition_jeans.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/refine_condition/RefineCondition_passive_scalar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_tracers_move.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_NGP_move.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_NGP_density.cpp
@@ -87,6 +88,7 @@ set( ic_src
     ${CMAKE_CURRENT_SOURCE_DIR}/passive_scalars/PassiveScalar_IC_uniform.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/passive_scalars/PassiveScalar_IC_kelvin_helmholtz.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/passive_scalars/PassiveScalar_IC_constant_metallicity.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/passive_scalars/PassiveScalar_IC_refinement.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/init/rt/InitialConditions_stromgren.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/init/InitialConditions_gadget.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/init/InitialConditions_uniform_metallicity.cpp
