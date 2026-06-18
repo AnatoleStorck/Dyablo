@@ -68,8 +68,8 @@ public:
     // Remove once seperate particle families
     star_birth_time_min( configMap.getValue_in_code_unit<Units::Time>(
                            "star_feedback", "star_birth_time_min", "1.1 Myr") ),
-    n_passive_scalars( configMap.getValue<int>("run", "n_passive_scalars",
-        configMap.getValue<std::vector<std::string>>("run", "passive_scalars_names", {}).size()) )
+    n_passive_scalars( configMap.getValue<int>("passive_scalars", "n_passive_scalars",
+        configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", {}).size()) )
   {
   }
 

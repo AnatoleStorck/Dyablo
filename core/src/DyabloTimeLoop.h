@@ -241,8 +241,8 @@ public:
 
     // Passive scalars
     // Needs to be first so that n_passive_scalars is defined for the policies
-    passive_scalars_names = configMap.getValue<std::vector<std::string>>("run", "passive_scalars_names", {});
-    n_passive_scalars = configMap.getValue<int>("run", "n_passive_scalars", passive_scalars_names.size());
+    passive_scalars_names = configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", {});
+    n_passive_scalars = configMap.getValue<int>("passive_scalars", "n_passive_scalars", passive_scalars_names.size());
     if( !has_restart_ic && n_passive_scalars > 0 )
     {
       std::set<std::string> field_names;
@@ -521,7 +521,7 @@ public:
     
     timers.get("passive_scalar_init").start();
     // Get initial conditions ids
-    std::vector<std::string> passive_scalars_ids = configMap.getValue<std::vector<std::string>>("run", "passive_scalars_init", {});
+    std::vector<std::string> passive_scalars_ids = configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_init", {});
     // Initialize cells
     {
       if( !has_restart_ic )
