@@ -82,7 +82,7 @@ public:
   {
     return Params{
       .hydro_params = BasePolicy::getParams(configMap),
-      .nscalars = configMap.getValue<int>("run",  "n_passive_scalars"),
+      .nscalars = configMap.getValue<int>("passive_scalars",  "n_passive_scalars"),
     };
   }
 
