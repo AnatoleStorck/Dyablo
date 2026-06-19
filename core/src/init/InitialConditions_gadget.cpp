@@ -181,7 +181,7 @@ public:
 
     int mpi_rank = GlobalMpiSession::get_comm_world().MPI_Comm_rank();
     if (mpi_rank == 0)
-        std::cout << "Merge all star particles into single array" << std::endl;
+        std::cout << "Merge all star-like particles into the 'star' family" << std::endl;
     if (U.has_ParticleArray("star")) {
         if (U.has_ParticleArray("bulge")) {
             U.merge_particles_if("star", "bulge", "mass");
@@ -191,24 +191,13 @@ public:
         }
     }
 
-    // Create new particle array
-    U.new_ParticleArray("particles", 0);
-
-    // Initialize attributes
-    U.new_ParticleAttribute("particles", "vx");
-    U.new_ParticleAttribute("particles", "vy");
-    U.new_ParticleAttribute("particles", "vz");
-    U.new_ParticleAttribute("particles", "mass");
-    U.new_ParticleAttribute("particles", "birth_mass");
-    U.new_ParticleAttribute("particles", "id");
-    U.new_ParticleAttribute("particles", "birth_time");
-
-    // put everything, including dark matter, in the "particles" array for now
-    if (U.has_ParticleArray("star")) {
-        U.merge_particles_if("particles", "star", "mass");
-    }
-    if (U.has_ParticleArray("dark_matter")) {
-        U.merge_particles_if("particles", "dark_matter", "mass");
+    // Keep "dark_matter" and "star" as separate families (see [particles] families).
+    // Ensure the "star" family always exists - even when the snapshot has no star
+    // particles - so star formation and stellar feedback have a valid destination.
+    if (!U.has_ParticleArray("star")) {
+        U.new_ParticleArray("star", 0);
+        for (const char* attr : { "vx", "vy", "vz", "mass", "birth_mass", "id", "birth_time" })
+            U.new_ParticleAttribute("star", attr);
     }
   }
 
