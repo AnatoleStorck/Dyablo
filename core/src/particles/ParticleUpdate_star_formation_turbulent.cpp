@@ -273,6 +273,7 @@ public:
     timers(timers),
     policy_params(Policy_Params::from_configMap(configMap)),
     cosmology( configMap.getValue<bool>("cosmology", "active", false) ),
+    star_family( configMap.getValue<std::string>("star_feedback", "star_family", "star") ),
     rho_threshold_physical( configMap.getValue_in_code_unit<Units::Density>("star_formation", "density_threshold", "1e3 proton_mass/cm**3") ),
     m_particle( configMap.getValue_in_code_unit<Units::Mass>("star_formation", "particle_mass", "500 solar_mass") ),
     rho_m([&]() {
@@ -479,8 +480,16 @@ public:
         std::cout << "Formed " << Nstar_formed << " star particles" << std::endl;
     }
 
-    // Merge spawned_particles to particles ignoring particles with mass=0
-    U.merge_particles_if( "particles", "spawned_particles", "mass" );
+    // Ensure the destination star family exists
+    if( !U.has_ParticleArray( star_family ) )
+    {
+      U.new_ParticleArray( star_family, 0 );
+      for( const char* attr : { "mass", "birth_mass", "vx", "vy", "vz", "birth_time", "id", "metallicity" } )
+        U.new_ParticleAttribute( star_family, attr );
+    }
+
+    // Merge spawned_particles into the star family ignoring particles with no mass
+    U.merge_particles_if( star_family, "spawned_particles", "mass" );
 
     timers.get("ParticleUpdate_star_formation_turbulent").stop();
   }
@@ -491,6 +500,7 @@ private:
   Timers& timers;
   Policy_Params policy_params;
   bool cosmology;
+  std::string star_family;
 
   real_t rho_threshold_physical;
   real_t m_particle;

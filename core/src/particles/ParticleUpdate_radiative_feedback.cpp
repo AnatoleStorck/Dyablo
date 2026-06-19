@@ -20,6 +20,7 @@ public:
     timers          ( timers ),
     n_groups        ( configMap.getValue<int>("rad", "n_groups", 4) ),
     photon_rate     ( configMap.getValue<real_t>("star_feedback", "photon_rate", 1e49) ),
+    star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "star") ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ) {}
 
   ~ParticleUpdate_radiative_feedback() {}
@@ -38,6 +39,12 @@ public:
 
     timers.get("ParticleUpdate_radiative_feedback").start();
 
+    if( !U.has_ParticleArray( star_family ) )
+    {
+      timers.get("ParticleUpdate_radiative_feedback").stop();
+      return;
+    }
+
     std::vector<UserData::FieldAccessor_FieldInfo> Uout_infos;
     for (int g = 0; g < n_groups; ++g) {
       Uout_infos.push_back({"e_rad_" + std::to_string(g), g});
@@ -46,8 +53,8 @@ public:
     //   pinfos = {{"mass", IMASS}, {"birth_time", IBIRTH}};
 
     // Get accessors
-    auto Ppos = U.getParticleArray( "particles" );
-    // auto Pdata = U.getParticleAccessor( "particles", pinfos );
+    auto Ppos = U.getParticleArray( star_family );
+    // auto Pdata = U.getParticleAccessor( star_family, pinfos );
     auto Uout = U.getAccessor( Uout_infos );
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
@@ -100,6 +107,7 @@ private:
 
   int n_groups;
   real_t photon_rate;
+  std::string star_family;
 
   bool cosmology;
 };

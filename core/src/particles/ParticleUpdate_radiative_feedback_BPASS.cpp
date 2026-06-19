@@ -174,9 +174,7 @@ public:
     bpass_data_path ( configMap.getValue<std::string>(
                         "star_feedback", "bpass_data_path",
                         "/data/anatole/BPASS") ),
-    // TODO: Remove once seperate particle families
-    star_birth_time_min( configMap.getValue_in_code_unit<Units::Time>(
-                           "star_feedback", "star_birth_time_min", "1.1 Myr") ),
+    star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "star") ),
     temp_metallicity( configMap.getValue<real_t>("star_feedback", "temp_metallicity", 1e-4) ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ),
     photon_rates    ( "BPASS_photon_rates",
@@ -290,12 +288,18 @@ public:
 
     timers.get("ParticleUpdate_radiative_feedback_BPASS").start();
 
+    if( !U.has_ParticleArray( star_family ) )
+    {
+      timers.get("ParticleUpdate_radiative_feedback_BPASS").stop();
+      return;
+    }
+
     std::vector<UserData::FieldAccessor_FieldInfo> Uout_infos;
     for (int g = 0; g < n_groups; ++g)
       Uout_infos.push_back({"e_rad_" + std::to_string(g), g});
 
     // DYABLO_ASSERT_HOST_RELEASE(
-    //   U.has_ParticleAttribute("particles", "metallicity"),
+    //   U.has_ParticleAttribute(star_family, "metallicity"),
     //   "ParticleUpdate_radiative_feedback_BPASS requires a 'metallicity' particle attribute"
     // );
     std::vector<UserData::ParticleAccessor_AttributeInfo> pinfos = {
@@ -304,8 +308,8 @@ public:
       //{"metallicity", IMETAL},
     };
 
-    auto Ppos  = U.getParticleArray("particles");
-    auto Pdata = U.getParticleAccessor("particles", pinfos);
+    auto Ppos  = U.getParticleArray(star_family);
+    auto Pdata = U.getParticleAccessor(star_family, pinfos);
     auto Uout  = U.getAccessor(Uout_infos);
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
@@ -317,7 +321,6 @@ public:
 
     // Local copies for KOKKOS_LAMBDA capture (View is ref-counted, cheap).
     auto photon_rates_l = this->photon_rates;
-    const real_t star_birth_time_min = this->star_birth_time_min;
     const real_t temp_metallicity = this->temp_metallicity;
     const int n_groups_l = this->n_groups;
 
@@ -325,12 +328,6 @@ public:
       "particles_update_radiative_feedback_BPASS", Ppos,
       KOKKOS_LAMBDA(const ForeachParticle::ParticleIndex& iPart)
     {
-      // Stars are the only particles born after the simulation has run for a
-      // while; everything older is dark matter / IC particles and contributes
-      // no radiation.
-       // TODO: Remove once seperate particle families
-      if (Pdata.at(iPart, IBIRTH) < star_birth_time_min) return;
-
       // BPASS metallicity grid (mass fraction)
       const real_t metal_grid[N_METALS] = {
         1e-5, 1e-4, 1e-3, 2e-3, 3e-3, 4e-3,
@@ -408,7 +405,7 @@ private:
 
   int n_groups;
   std::string bpass_data_path;
-  real_t star_birth_time_min;
+  std::string star_family;
   real_t temp_metallicity;
   bool cosmology;
 
