@@ -924,7 +924,8 @@ public:
     if( particle_position_updater )
     {
       particle_position_updater->update( U, m_scalar_data );
-      U.distributeParticles("particles");
+      // Redistribute all families
+      U.distributeAllParticles();
     }
 
     // Update hydro

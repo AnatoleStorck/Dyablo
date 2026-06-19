@@ -1,6 +1,7 @@
 #include "ParticleUpdate_base.h"
 
 #include "ForeachParticle.h"
+#include "ParticleFamilies.h"
 
 namespace dyablo {
 
@@ -9,10 +10,11 @@ public:
   ParticleUpdate_NGP_move(
           ConfigMap& configMap,
           ForeachCell& foreach_cell,
-          Timers& timers) 
+          Timers& timers)
   : foreach_cell(foreach_cell),
     foreach_particle(foreach_cell.get_amr_mesh(), configMap),
     timers(timers),
+    families( getParticleFamilies(configMap) ),
     data{
       .xmin = configMap.getValue<real_t>("mesh", "xmin", 0.0),
       .xmax = configMap.getValue<real_t>("mesh", "xmax", 1.0),      
@@ -39,31 +41,37 @@ public:
     };
 
     auto Uin = U.getAccessor( {{"gx", IGX},{"gy", IGY},{"gz", IGZ}} );
-    const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( "particles" );
-    UserData::ParticleAccessor Pdata = U.getParticleAccessor( "particles", {{"vx", IVX},{"vy", IVY},{"vz", IVZ}} );
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
     const Data& d = this->data;
 
-    foreach_particle.foreach_particle( "particles_update_position", Ppos,
-      KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
+    for( const std::string& family : families )
     {
-      ForeachCell::CellIndex iCell = cells.getCellFromPos( {Ppos.pos(iPart, IX), Ppos.pos(iPart, IY), Ppos.pos(iPart, IZ)} );
+      if( !U.has_ParticleArray( family ) ) continue;
 
-      Pdata.at( iPart, IVX ) += dt * Uin.at( iCell, IGX );
-      Pdata.at( iPart, IVY ) += dt * Uin.at( iCell, IGY );
-      Pdata.at( iPart, IVZ ) += dt * Uin.at( iCell, IGZ );
-      Ppos.pos(iPart, IX) += dt * Pdata.at( iPart, IVX );
-      Ppos.pos(iPart, IY) += dt * Pdata.at( iPart, IVY );
-      Ppos.pos(iPart, IZ) += dt * Pdata.at( iPart, IVZ );
+      const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( family );
+      UserData::ParticleAccessor Pdata = U.getParticleAccessor( family, {{"vx", IVX},{"vy", IVY},{"vz", IVZ}} );
 
-      // Compute periodic position
-      Ppos.pos(iPart, IX) = fmod( (Ppos.pos(iPart, IX) - d.xmin) + (d.xmax-d.xmin) , d.xmax-d.xmin) + d.xmin;
-      Ppos.pos(iPart, IY) = fmod( (Ppos.pos(iPart, IY) - d.ymin) + (d.ymax-d.ymin) , d.ymax-d.ymin) + d.ymin;
-      Ppos.pos(iPart, IZ) = fmod( (Ppos.pos(iPart, IZ) - d.zmin) + (d.zmax-d.zmin) , d.zmax-d.zmin) + d.zmin;
+      foreach_particle.foreach_particle( "particles_update_position", Ppos,
+        KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
+      {
+        ForeachCell::CellIndex iCell = cells.getCellFromPos( {Ppos.pos(iPart, IX), Ppos.pos(iPart, IY), Ppos.pos(iPart, IZ)} );
 
-    });   
+        Pdata.at( iPart, IVX ) += dt * Uin.at( iCell, IGX );
+        Pdata.at( iPart, IVY ) += dt * Uin.at( iCell, IGY );
+        Pdata.at( iPart, IVZ ) += dt * Uin.at( iCell, IGZ );
+        Ppos.pos(iPart, IX) += dt * Pdata.at( iPart, IVX );
+        Ppos.pos(iPart, IY) += dt * Pdata.at( iPart, IVY );
+        Ppos.pos(iPart, IZ) += dt * Pdata.at( iPart, IVZ );
+
+        // Compute periodic position
+        Ppos.pos(iPart, IX) = fmod( (Ppos.pos(iPart, IX) - d.xmin) + (d.xmax-d.xmin) , d.xmax-d.xmin) + d.xmin;
+        Ppos.pos(iPart, IY) = fmod( (Ppos.pos(iPart, IY) - d.ymin) + (d.ymax-d.ymin) , d.ymax-d.ymin) + d.ymin;
+        Ppos.pos(iPart, IZ) = fmod( (Ppos.pos(iPart, IZ) - d.zmin) + (d.zmax-d.zmin) , d.zmax-d.zmin) + d.zmin;
+
+      });
+    }
 
     timers.get("ParticleUpdate_NGP_move").stop();
   }
@@ -71,7 +79,8 @@ public:
 private:
   ForeachCell& foreach_cell;
   ForeachParticle foreach_particle;
-  Timers& timers;  
+  Timers& timers;
+  std::vector<std::string> families;
 public: //Needed for nvcc
   struct Data {
     real_t xmin,xmax,ymin,ymax,zmin,zmax;

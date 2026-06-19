@@ -1,6 +1,7 @@
 #include "ParticleUpdate_base.h"
 
 #include "ForeachParticle.h"
+#include "ParticleFamilies.h"
 #include "foreach_cell/ForeachCell_utils.h"
 #include "mpi/GhostCommunicator.h"
 
@@ -13,10 +14,11 @@ public:
   ParticleUpdate_TSC_density(
           ConfigMap& configMap,
           ForeachCell& foreach_cell,
-          Timers& timers) 
+          Timers& timers)
   : foreach_cell(foreach_cell),
     foreach_particle(foreach_cell.get_amr_mesh(), configMap),
-    timers(timers)
+    timers(timers),
+    parr_names( configMap.getValue<std::vector<std::string>>("particles", "density_projected_arrays", getParticleFamilies(configMap)) )
   {}
 
   ~ParticleUpdate_TSC_density() {}
@@ -42,20 +44,26 @@ public:
     };
 
     auto Uin = U.getAccessor( {{"rho", IRho}, {"rho_g", IRhoG}} );
-    const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( "particles" );
-    UserData::ParticleAccessor Pdata = U.getParticleAccessor( "particles", {{"mass", IMass}} );
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
+    // Initialize rho_g with the gas density, then accumulate every family.
     foreach_cell.foreach_cell( "ParticleUpdate_TSC_density::copy_density", Uin.getShape(),
       KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell )
     {
       Uin.at(iCell, IRhoG) = Uin.at(iCell, IRho);
     });
-    
-    foreach_particle.foreach_particle( "ParticleUpdate_TSC_density::projection", Ppos,
-      KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
+
+    for( const std::string& particle_array_name : parr_names )
     {
+      if( !U.has_ParticleArray(particle_array_name) ) continue;
+
+      const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( particle_array_name );
+      UserData::ParticleAccessor Pdata = U.getParticleAccessor( particle_array_name, {{"mass", IMass}} );
+
+      foreach_particle.foreach_particle( "ParticleUpdate_TSC_density::projection", Ppos,
+        KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
+      {
       real_t part_mass = Pdata.at( iPart, IMass );
       pos_t part_pos = {Ppos.pos(iPart, IX), Ppos.pos(iPart, IY), Ppos.pos(iPart, IZ)};
       ForeachCell::CellIndex iCell = cells.getCellFromPos( part_pos );
@@ -124,7 +132,8 @@ public:
       for (int16_t iz=(ndim==3)?-1:0; iz<=(ndim==3)?1:0; iz++)
         apply_rho_contrib( {ix, iy, iz} );
 
-    });
+      });
+    }
 
     GhostCommunicator ghost_communicator( foreach_cell.get_amr_mesh(), U.getShape(), 1 );
     auto Urhog = U.getAccessor( {{"rho_g", IRhoG}} );
@@ -136,7 +145,9 @@ public:
 private:
   ForeachCell& foreach_cell;
   ForeachParticle foreach_particle;
-  Timers& timers;  
+  Timers& timers;
+
+  std::vector<std::string> parr_names;
 };
 
 } // namespace dyablo

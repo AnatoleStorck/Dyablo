@@ -1,6 +1,7 @@
 #include "ParticleUpdate_base.h"
 
 #include "ForeachParticle.h"
+#include "ParticleFamilies.h"
 #include "foreach_cell/ForeachCell_utils.h"
 
 namespace dyablo {
@@ -10,10 +11,11 @@ public:
   ParticleUpdate_TSC_move(
           ConfigMap& configMap,
           ForeachCell& foreach_cell,
-          Timers& timers) 
+          Timers& timers)
   : foreach_cell(foreach_cell),
     foreach_particle(foreach_cell.get_amr_mesh(), configMap),
     timers(timers),
+    families( getParticleFamilies(configMap) ),
     data{
       .xmin = configMap.getValue<real_t>("mesh", "xmin", 0.0),
       .xmax = configMap.getValue<real_t>("mesh", "xmax", 1.0),      
@@ -51,16 +53,21 @@ public:
     };
 
     auto Uin = U.getAccessor( {{"gx", IGX},{"gy", IGY},{"gz", IGZ}} );
-    const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( "particles" );
-    UserData::ParticleAccessor Pdata = U.getParticleAccessor( "particles", {{"vx", IVX},{"vy", IVY},{"vz", IVZ}} );
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
     const Data& d = this->data;
 
-    foreach_particle.foreach_particle( "particles_update_position", Ppos,
-      KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
+    for( const std::string& family : families )
     {
+      if( !U.has_ParticleArray( family ) ) continue;
+
+      const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( family );
+      UserData::ParticleAccessor Pdata = U.getParticleAccessor( family, {{"vx", IVX},{"vy", IVY},{"vz", IVZ}} );
+
+      foreach_particle.foreach_particle( "particles_update_position", Ppos,
+        KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
+      {
       pos_t part_pos = {Ppos.pos(iPart, IX), Ppos.pos(iPart, IY), Ppos.pos(iPart, IZ)};
       ForeachCell::CellIndex iCell = cells.getCellFromPos( part_pos );
       ForeachCell::SearchMode_neighbor search_neighbor( cells.getLightOctree(), ForeachCell::SearchMode_neighbor::CLOSEST );
@@ -134,7 +141,8 @@ public:
       Ppos.pos(iPart, IY) = fmod( (Ppos.pos(iPart, IY) - d.ymin) + (d.ymax-d.ymin) , d.ymax-d.ymin) + d.ymin;
       Ppos.pos(iPart, IZ) = fmod( (Ppos.pos(iPart, IZ) - d.zmin) + (d.zmax-d.zmin) , d.zmax-d.zmin) + d.zmin;
 
-    });   
+      });
+    }
 
     timers.get("ParticleUpdate_TSC_move").stop();
   }
@@ -142,7 +150,8 @@ public:
 private:
   ForeachCell& foreach_cell;
   ForeachParticle foreach_particle;
-  Timers& timers;  
+  Timers& timers;
+  std::vector<std::string> families;
 public: // Needed for nvcc
   struct Data {
     real_t xmin,xmax,ymin,ymax,zmin,zmax;
