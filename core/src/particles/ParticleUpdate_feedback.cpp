@@ -65,9 +65,7 @@ public:
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ),
     // meant to be temporary until we have proper metallicity evolution and SNII yields
     metallicity_uniform     ( configMap.getValue<real_t>("constant_metallicity", "metallicity") ),
-    // Remove once seperate particle families
-    star_birth_time_min( configMap.getValue_in_code_unit<Units::Time>(
-                           "star_feedback", "star_birth_time_min", "1.1 Myr") ),
+    star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "star") ),
     n_passive_scalars( configMap.getValue<int>("passive_scalars", "n_passive_scalars",
         configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", {}).size()) )
   {
@@ -92,6 +90,12 @@ public:
 
     timers.get("ParticleUpdate_feedback").start();
 
+    if( !U.has_ParticleArray( star_family ) )
+    {
+      timers.get("ParticleUpdate_feedback").stop();
+      return;
+    }
+
     // Scratch field to replenish the passive scalars by accumulating the gas mass deposited
     // into each cell by the supernovae of this step.
     U.new_fields( {"feedback_rho_added"} );
@@ -115,8 +119,8 @@ public:
       Uin_passive = U.getAccessor( passive_fields );
 
     // Get accessors
-    auto Ppos = U.getParticleArray( "particles" );
-    auto Pdata = U.getParticleAccessor( "particles", pinfos );
+    auto Ppos = U.getParticleArray( star_family );
+    auto Pdata = U.getParticleAccessor( star_family, pinfos );
     auto Uin = U.getAccessor( Uin_infos );
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
@@ -145,9 +149,6 @@ public:
     foreach_particle.foreach_particle( "particles_update_feedback", Ppos,
       KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
     {
-       // Remove once seperate particle families
-      if (Pdata.at(iPart, IBIRTH) < star_birth_time_min) return;
-
       real_t part_birth_time_phys_yr = (Pdata.at(iPart, IBIRTH) * code_time).convert_to(Units::yr());
       real_t part_age_phys_yr = t_phys_yr - part_birth_time_phys_yr;
       if (part_age_phys_yr <= 0) // decide whether this is actually needed
@@ -269,7 +270,7 @@ private:
   bool cosmology;
 
   real_t metallicity_uniform;
-  real_t star_birth_time_min;
+  std::string star_family;
   int n_passive_scalars;
 };
 
