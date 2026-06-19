@@ -1,6 +1,7 @@
 #include "ParticleUpdate_base.h"
 
 #include "ForeachParticle.h"
+#include "ParticleFamilies.h"
 #include "foreach_cell/ForeachCell_utils.h"
 #include "mpi/GhostCommunicator.h"
 
@@ -17,13 +18,28 @@ public:
   : foreach_cell(foreach_cell),
     foreach_particle(foreach_cell.get_amr_mesh(), configMap),
     timers(timers),
-    parr_names( configMap.getValue<std::vector<std::string>>("particles", "density_projected_arrays", {"particles"}))
+    parr_names( configMap.getValue<std::vector<std::string>>("particles", "density_projected_arrays", getParticleFamilies(configMap)))
   {}
 
   ~ParticleUpdate_CIC_density() {}
 
-  void update( UserData& U, ScalarSimulationData& scalar_data ) 
+  void update( UserData& U, ScalarSimulationData& scalar_data )
   {
+    timers.get("ParticleUpdate_CIC_density").start();
+
+    enum VarIndex_g{
+      IRho, IRhoG
+    };
+
+    auto Uin = U.getAccessor( {{"rho", IRho}, {"rho_g", IRhoG}} );
+
+    // Initialize rho_g with the gas density, then accumulate every family.
+    foreach_cell.foreach_cell( "ParticleUpdate_CIC_density::copy_density", Uin.getShape(),
+      KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell )
+    {
+      Uin.at(iCell, IRhoG) = Uin.at(iCell, IRho);
+    });
+
     for (auto & pname : parr_names)
     {
       if (!U.has_ParticleArray(pname)) continue;
@@ -32,13 +48,17 @@ public:
       else
         update_aux<3>(U, scalar_data, pname);
     }
+
+    GhostCommunicator ghost_communicator( foreach_cell.get_amr_mesh(), U.getShape(), 1 );
+    auto Urhog = U.getAccessor( {{"rho_g", IRhoG}} );
+    ghost_communicator.reduce_ghosts(Urhog);
+
+    timers.get("ParticleUpdate_CIC_density").stop();
   }
 
   template< int ndim>
-  void update_aux( UserData& U, ScalarSimulationData& scalar_data, const std::string& particle_array_name ) 
+  void update_aux( UserData& U, ScalarSimulationData& scalar_data, const std::string& particle_array_name )
   {
-    timers.get("ParticleUpdate_CIC_density").start();
-
     enum VarIndex_g{
       IRho, IRhoG
     };
@@ -52,12 +72,6 @@ public:
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
-    foreach_cell.foreach_cell( "ParticleUpdate_CIC_density::copy_density", Uin.getShape(),
-      KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell )
-    {
-      Uin.at(iCell, IRhoG) = Uin.at(iCell, IRho);
-    });
-    
     foreach_particle.foreach_particle( "ParticleUpdate_CIC_density::projection", Ppos,
       KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
     {
@@ -134,12 +148,6 @@ public:
       }
 
     });
-
-    GhostCommunicator ghost_communicator( foreach_cell.get_amr_mesh(), U.getShape(), 1 );
-    auto Urhog = U.getAccessor( {{"rho_g", IRhoG}} );
-    ghost_communicator.reduce_ghosts(Urhog);
-
-    timers.get("ParticleUpdate_CIC_density").stop();
   }
 
 private:
