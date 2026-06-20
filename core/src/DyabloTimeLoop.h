@@ -223,6 +223,30 @@ private:
                                       p.coarse_grid_size );
   }
 public:
+
+  /// Initialize e_int = e_tot - e_kin for the dual-energy formulation.
+  /// Needs to be defined outside the constructor.
+  void init_e_int_field( ConfigMap& configMap )
+  {
+    const int ndim_e_int = configMap.getValue<int>("mesh", "ndim", 3);
+    enum VarIndex_eint { Irho, Ie_tot, Ie_int, Irho_vx, Irho_vy, Irho_vz };
+    std::vector<UserData::FieldAccessor::FieldInfo> finfo = {
+      {"rho", Irho}, {"e_tot", Ie_tot}, {"e_int", Ie_int},
+      {"rho_vx", Irho_vx}, {"rho_vy", Irho_vy} };
+    if( ndim_e_int == 3 ) finfo.push_back({"rho_vz", Irho_vz});
+    UserData::FieldAccessor Ueint = U.getAccessor(finfo);
+    m_foreach_cell.foreach_cell( "init_e_int", U.getShape(),
+      KOKKOS_LAMBDA(const ForeachCell::CellIndex& iCell)
+    {
+      const real_t rho  = Ueint.at(iCell, Irho);
+      const real_t rhou = Ueint.at(iCell, Irho_vx);
+      const real_t rhov = Ueint.at(iCell, Irho_vy);
+      const real_t rhow = (ndim_e_int == 3 ? Ueint.at(iCell, Irho_vz) : 0.0);
+      const real_t ekin = (rho != 0 ? 0.5*(rhou*rhou + rhov*rhov + rhow*rhow)/rho : 0.0);
+      Ueint.at(iCell, Ie_int) = Ueint.at(iCell, Ie_tot) - ekin;
+    });
+  }
+
   /**
    * Create ans initialize a simulation
    **/
@@ -372,23 +396,7 @@ public:
 
       if( !has_restart_ic || need_create )
       {
-      const int ndim_e_int = configMap.getValue<int>("mesh", "ndim", 3);
-      enum VarIndex_eint { Irho, Ie_tot, Ie_int, Irho_vx, Irho_vy, Irho_vz };
-      std::vector<UserData::FieldAccessor::FieldInfo> finfo = {
-        {"rho", Irho}, {"e_tot", Ie_tot}, {"e_int", Ie_int},
-        {"rho_vx", Irho_vx}, {"rho_vy", Irho_vy} };
-      if( ndim_e_int == 3 ) finfo.push_back({"rho_vz", Irho_vz});
-      UserData::FieldAccessor Ueint = U.getAccessor(finfo);
-      m_foreach_cell.foreach_cell( "init_e_int", U.getShape(),
-        KOKKOS_LAMBDA(const ForeachCell::CellIndex& iCell)
-      {
-        const real_t rho  = Ueint.at(iCell, Irho);
-        const real_t rhou = Ueint.at(iCell, Irho_vx);
-        const real_t rhov = Ueint.at(iCell, Irho_vy);
-        const real_t rhow = (ndim_e_int == 3 ? Ueint.at(iCell, Irho_vz) : 0.0);
-        const real_t ekin = (rho != 0 ? 0.5*(rhou*rhou + rhov*rhov + rhow*rhow)/rho : 0.0);
-        Ueint.at(iCell, Ie_int) = Ueint.at(iCell, Ie_tot) - ekin;
-      });
+        init_e_int_field( configMap );
       } // (re)initialize e_int
     } // dual-energy e_int field setup
 

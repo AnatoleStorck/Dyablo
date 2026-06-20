@@ -355,6 +355,8 @@ public:
     // ------ Call PRISM cooling update on each cell ------
     foreach_cell.reduce_cell( "CoolingUpdate_PRISM", Uin.getShape(),
       KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell, int& max_iter_reached_local ) {
+        const real_t gamma_m1 = gamma0 - 1.0;
+
         Kokkos::Experimental::AcquireUniqueToken<exec_space> slot(token);
         CompactIonData& n_and_ion_fracs_loc = compact_data(slot.value());
 
@@ -364,7 +366,7 @@ public:
 
         real_t p_thermal = q.p;
         if constexpr ( Policy::has_dual_energy() )
-          p_thermal = (gamma0 - 1.0) * u.e_int;
+          p_thermal = gamma_m1 * u.e_int;
 
         // Initial state
         auto rho_physical = Units::supercomoving_to_physical<Units::Density>(q.rho, aexp) * code_density;
@@ -478,7 +480,7 @@ public:
         }
 
         const real_t p_thermal_new = (out_T_over_mu * Units::Kelvin() * rho_physical / mp_over_kb).convert_to(code_pressure);
-        const real_t delta_e_int = (p_thermal_new - p_thermal) / (gamma0 - 1.0);
+        const real_t delta_e_int = (p_thermal_new - p_thermal) / gamma_m1;
 
         u.e_tot += delta_e_int;
         if constexpr ( Policy::has_dual_energy() )

@@ -144,6 +144,8 @@ public:
       patch.foreach_cell( Uout.getShape(), 
         KOKKOS_LAMBDA( const CellIndex& iCell_Uout )
       {
+        [[maybe_unused]] const bool dual_energy_on = dual_energy;
+
         ForeachCell::SearchMode_neighbor search_neighbor( cellmetadata.getLightOctree(), ForeachCell::SearchMode_neighbor::CLOSEST );
 
         // Return Slope at position iCell
@@ -278,7 +280,7 @@ public:
           // Add the non-conservative source term -P div(u) * dt.
           if constexpr ( Policy::has_dual_energy() )
           {
-            if( dual_energy )
+            if( dual_energy_on )
               du.e_int -= qC0.p * (ustarR - ustarL) * dt / size_C;
           }
           return du;
