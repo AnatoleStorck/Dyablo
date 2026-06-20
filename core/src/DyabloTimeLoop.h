@@ -781,11 +781,16 @@ public:
       if( m_enable_checkpoint && m_iteration_handler->checkpoint_trigger(m_scalar_data) )
       {
         int rank = m_communicator.MPI_Comm_rank();
+        timers.get("checkpoint").stop();
+        timers.get("TimeLoop").stop();
         if( rank == 0 )
         {
           std::cout << "Checkpoint: ";
           m_scalar_data.print();
+          timers.print();
         }
+        timers.get("TimeLoop").start();
+        timers.get("checkpoint").start();
         io_manager_checkpoint->save_snapshot(U, m_scalar_data);
       }
       timers.get("checkpoint").stop();
