@@ -60,7 +60,7 @@ public:
       const ForeachParticle::ParticleArray& Ppos = U.getParticleArray( family );
       UserData::ParticleAccessor Pdata = U.getParticleAccessor( family, {{"vx", IVX},{"vy", IVY},{"vz", IVZ}} );
 
-      real_t inv_dt_family;
+      real_t inv_dt_family = 0.0;
       foreach_particle.reduce_particle( "compute_dt", Pdata.getShape(),
       KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex &iPart, real_t& inv_dt_update )
       {
