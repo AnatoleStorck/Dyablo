@@ -58,6 +58,13 @@ public:
       {
         max_e_rad_update = FMAX( max_e_rad_update, Urt_check.at(iCell, 0) );
       }, Kokkos::Max<real_t>(max_e_rad) );
+
+      {
+        real_t max_e_rad_local = max_e_rad;
+        auto communicator = foreach_cell.get_amr_mesh().getMpiComm();
+        communicator.MPI_Allreduce(&max_e_rad_local, &max_e_rad, 1, MpiComm::MPI_Op_t::MAX);
+      }
+
       if (max_e_rad < 1e-19) {
         // set the radiation to 1e-20 (there are numerical errors which can build up)
         foreach_cell.foreach_cell( "compute_dt_rad_set_e_rad", U.getShape(),
