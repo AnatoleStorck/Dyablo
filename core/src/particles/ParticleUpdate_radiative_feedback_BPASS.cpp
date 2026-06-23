@@ -175,7 +175,6 @@ public:
                         "star_feedback", "bpass_data_path",
                         "/data/anatole/BPASS") ),
     star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "star") ),
-    temp_metallicity( configMap.getValue<real_t>("star_feedback", "temp_metallicity", 1e-4) ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ),
     photon_rates    ( "BPASS_photon_rates",
                       N_METALS, N_AGES, n_groups > 0 ? n_groups : 1 )
@@ -298,14 +297,14 @@ public:
     for (int g = 0; g < n_groups; ++g)
       Uout_infos.push_back({"e_rad_" + std::to_string(g), g});
 
-    // DYABLO_ASSERT_HOST_RELEASE(
-    //   U.has_ParticleAttribute(star_family, "metallicity"),
-    //   "ParticleUpdate_radiative_feedback_BPASS requires a 'metallicity' particle attribute"
-    // );
+    DYABLO_ASSERT_HOST_RELEASE(
+      U.has_ParticleAttribute(star_family, "metallicity"),
+      "ParticleUpdate_radiative_feedback_BPASS requires a 'metallicity' particle attribute"
+    );
     std::vector<UserData::ParticleAccessor_AttributeInfo> pinfos = {
       {"birth_mass",  IBIRTHMASS},
       {"birth_time",  IBIRTH},
-      //{"metallicity", IMETAL},
+      {"metallicity", IMETAL},
     };
 
     auto Ppos  = U.getParticleArray(star_family);
@@ -321,7 +320,6 @@ public:
 
     // Local copies for KOKKOS_LAMBDA capture (View is ref-counted, cheap).
     auto photon_rates_l = this->photon_rates;
-    const real_t temp_metallicity = this->temp_metallicity;
     const int n_groups_l = this->n_groups;
 
     foreach_particle.foreach_particle(
@@ -352,8 +350,7 @@ public:
         (Pdata.at(iPart, IBIRTHMASS) * code_mass).convert_to(Units::solar_mass());
 
       
-      //const real_t Z = Pdata.at(iPart, IMETAL);
-      const real_t Z = temp_metallicity; // Temporary: ignore particle metallicity and use a fixed value
+      const real_t Z = Pdata.at(iPart, IMETAL);
 
       // --- Bilinear interpolation in (Z, log10 age), with clipping ---
       const real_t Z_clip = FMIN(FMAX(Z, metal_grid[0]), metal_grid[N_METALS - 1]);
@@ -406,7 +403,7 @@ private:
   int n_groups;
   std::string bpass_data_path;
   std::string star_family;
-  real_t temp_metallicity;
+  real_t metallicity_uniform;
   bool cosmology;
 
   Kokkos::View<real_t***> photon_rates;  // [N_METALS][N_AGES][n_groups]
