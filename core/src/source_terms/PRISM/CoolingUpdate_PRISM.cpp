@@ -205,7 +205,6 @@ public:
         policy_params   ( Policy::getParams(configMap)),
         cosmo_run       ( configMap.getValue<bool>("cosmology", "active", false)),
         data_path       ( configMap.getValue<std::string>("cooling", "data_path")),
-        // HM12_UVB_data(PRISM::load_UVB_data(UVB_table_path)),
         ions            ( configMap.getValue<std::vector<std::string>>("cooling", "ions" ) ),
         rt_groups_lower ( configMap.getValue<std::vector<real_t>>("rad", "photon_groups_lower",
                           {13.6, 15.2, 24.59, 54.42}) ),
@@ -328,6 +327,7 @@ public:
     real_t dt_s = (dt * code_time).convert_to(Units::second());
 
     const real_t gamma0 = this->policy_params.policy_params.gamma0;
+    const real_t Z_over_Zsun = this->policy_params.policy_params.Z_over_Zsun;
 
     const std::array<int, MAX_ELEMENTS> &nions_and_molecules = this->nions_and_molecules;
     const std::array<int, MAX_ELEMENTS> &elems2passive = this->elems2passive;
@@ -406,6 +406,7 @@ public:
         // TODO: CO
         real_t nCO = 0;
         real_t out_T_over_mu, out_mu;
+        int total_iter_reached;
 
         // Physics flags
         PhysicsFlags flags {
@@ -417,29 +418,15 @@ public:
             .include_charge_exchange        = true,
         };
 
-        // get metallicity
-        real_t metallicity;
-
-        metallicity = 0.0;
-        // Actually get metallicity from n_and_ion_fracs_loc
-        double nH = n_and_ion_fracs_loc.n_element[1];
-        double nHe = n_and_ion_fracs_loc.n_element[2];
-        double nC = n_and_ion_fracs_loc.n_element[6];
-        double nO = n_and_ion_fracs_loc.n_element[8];
-        double Z = (12*nC + 16*nO) / (nH + 4*nHe + 12*nC + 16*nO);
-        metallicity = Z / 0.0139; // is taken relative to solar
-
         if (T_over_mu < 2.727e0) {
           // Can't have gas cool below the CMB temperature floor, and
           // it will alsonheavily slow down the chemistry solver
           T_over_mu = 2.727e0;
         }
 
-        int total_iter_reached;
-
         rtz_solver.solve_chemistry_and_cooling(
           T_over_mu,
-          metallicity,
+          Z_over_Zsun,
           aexp,
           dt_s,
           n_and_ion_fracs_loc,
