@@ -904,13 +904,16 @@ public:
       }
     }
 
+    timers.get("AMR") .start();
     timers.get("MPI ghosts").start();
     communicate_ghosts( fields_to_exchange );
     timers.get("MPI ghosts").stop();
+    timers.get("AMR") .stop();
 
     // Update gravity
     if( gravity_solver )
     {
+      timers.get("Gravity").start();
       if( particle_update_density )
       {
         U.new_fields({"rho_g"});
@@ -924,26 +927,33 @@ public:
       gravity_solver->update_gravity_field(U, m_scalar_data);
 
       // Maybe put this only in CIC move since we don't need it for NGP
+      timers.get("AMR").start();
       timers.get("MPI ghosts").start();
       communicate_ghosts( {"gx", "gy", "gz"} );
       timers.get("MPI ghosts").stop();
+      timers.get("AMR").stop();
 
       // Restore rho before projection (only if particle projection)
       if( particle_update_density )
         U.move_field("rho", "rho_bak");
+      
+      timers.get("Gravity").stop();
     }
 
     // Move particles
     if( particle_position_updater )
     {
+      timers.get("Particles").start();
       particle_position_updater->update( U, m_scalar_data );
       // Redistribute all families
       U.distributeAllParticles();
+      timers.get("Particles").stop();
     }
 
     // Update hydro
     if( godunov_updater )
     {
+      timers.get("Hydrodynamics").start();
       U.new_fields({"rho_next", "e_tot_next", "rho_vx_next", "rho_vy_next", "rho_vz_next"});
       if( !this->has_mhd )
         U.new_fields({"e_int_next"}); // dual-energy internal energy (Hydro state)
@@ -962,12 +972,12 @@ public:
           U.new_fields({"psi_next"});
       }
 
-      timers.get("Hydro Update").start();
       godunov_updater->update( U, m_scalar_data );
-      timers.get("Hydro Update").stop();
+      timers.get("Hydrodynamics").stop();
 
       if( rad_updater )
       {
+        timers.get("Radiation").start();
         const int n_groups = m_scalar_data.get<int>("n_groups");
         // generate update fields for each group
         for (int g = 0; g < n_groups; g++) {
@@ -976,9 +986,8 @@ public:
         }
         // This now has an overriden update in RadUpdate_euler
         // that cycles over radiation groups and updates them.
-        timers.get("Rad Update").start();
         rad_updater->update( U, m_scalar_data );
-        timers.get("Rad Update").stop();
+        timers.get("Radiation").stop();
       }
 
       if(gravity_update)
@@ -998,8 +1007,10 @@ public:
         }
       }
 
+      timers.get("Source").start();
       for (auto &source_updater : source_updaters)
         source_updater->update( U, m_scalar_data );
+      timers.get("Source").stop();
 
       // Moving back passive scalars after source update
       if (n_passive_scalars > 0) {
@@ -1056,8 +1067,10 @@ public:
     }
 
     // Particle source terms
+    timers.get("Particles").start();
     for (auto &particle_source_updater : particle_source_updaters)
       particle_source_updater->update( U, m_scalar_data );
+    timers.get("Particles").stop();
 
     m_iteration_handler->next_iter(m_scalar_data);
 
@@ -1081,28 +1094,28 @@ public:
         communicate_ghosts( all_fields );
         timers.get("MPI ghosts").stop();
 
-        timers.get("AMR: Mark cells").start();
+        timers.get("Mark cells").start();
         refine_condition->mark_cells( U, m_scalar_data );
-        timers.get("AMR: Mark cells").stop();
+        timers.get("Mark cells").stop();
 
         // Backup old mesh
         mapUserData->save_old_mesh(U);
 
-        timers.get("AMR: adapt").start();
+        timers.get("adapt").start();
         // 1. adapt mesh with mapper enabled
         m_amr_mesh->adapt();
         // Verify that adapt() doesn't need another iteration (expensive : only debug)
-        timers.get("AMR: adapt").stop();
+        timers.get("adapt").stop();
 
         // Resize and fill U with copied/interpolated/extrapolated data
-        timers.get("AMR: remap userdata").start();
+        timers.get("remap userdata").start();
         mapUserData->remap(U);
 
         //TODO
         //std::cout << "Resize U after remap : " << DataArrayBlock::required_allocation_size(U2.U.extent(0), U2.U.extent(1), U2.U.extent(2)) * (2/1e6)
         //    << " -> " << DataArrayBlock::required_allocation_size(U2.U.extent(0), U2.U.extent(1), m_amr_mesh->getNumOctants()) * (2/1e6) << " MBytes" << std::endl;
 
-        timers.get("AMR: remap userdata").stop();
+        timers.get("remap userdata").stop();
 
         U.distributeAllParticles();
 
@@ -1114,12 +1127,14 @@ public:
     {
       if( m_iteration_handler->loadbalance_trigger(m_scalar_data)  )
       {
-        timers.get("AMR: load-balance").start();
+        timers.get("AMR").start();
 
+        timers.get("load-balance").start();
         m_amr_mesh->loadBalance_userdata(m_loadbalance_coherent_levels, U);
         U.distributeAllParticles();
+        timers.get("load-balance").stop();
 
-        timers.get("AMR: load-balance").stop();
+        timers.get("AMR").stop();
       }
     }
   }
