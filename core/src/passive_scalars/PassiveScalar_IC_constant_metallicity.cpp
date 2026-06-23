@@ -228,20 +228,54 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
     auto Uion   = U.getAccessor( new_ion_fields_info );
     auto Uhydro = U.getAccessor( fields_info );
 
-    const real_t X = 0.76;
-    const real_t Y = 0.24;
-    const real_t Z = metallicity;
 
-    const real_t metal_count_no_hhe = metals.size() > 2 ? (metals.size() - 2) : 1;
 
+    // // generate atomic table // //
+    struct Element_Info
+    {
+        int    atomic_number = -1;
+        int    n_ions        = -1;
+        double atomic_mass   = -1.0;
+        double z_solar       = -1.0;
+        double depletion     = 1.0;
+    };
+
+    std::map<std::string, Element_Info> elements = {
+        //                                           Grevesse (2010)
+        //    symbol      Z    n_ions   atomic_mass  nZ/nH (solar)  depletion
+            { "H",      { 1,   1  + 1,  1.008,       1.0,           1.0  } },
+            { "He",     { 2,   2  + 1,  4.0026,      8.51E-02,      1.0  } },
+            { "C",      { 6,   6  + 1,  12.0107,     2.69E-04,      0.5  } },
+            { "N",      { 7,   7  + 1,  14.0067,     6.76E-05,      0.6  } },
+            { "O",      { 8,   8  + 1,  15.9994,     4.90E-04,      0.73 } },
+            { "Ne",     { 10,  10 + 1,  20.1797,     8.51E-05,      1.0  } },
+            { "Mg",     { 12,  12 + 1,  24.305,      3.98E-05,      0.16 } },
+            { "Si",     { 14,  14 + 1,  28.0855,     3.24E-05,      0.1  } },
+            { "S",      { 16,  16 + 1,  32.065,      1.32E-05,      1.0  } },
+            { "Fe",     { 26,  26 + 1,  55.854,      3.16E-05,      0.01 } },
+    };
+
+    // loop over non-H and non-He metals to scale their nZ/nH (solar) by the metallicity
+    for( size_t i=0; i<metals.size(); i++ ) {
+        if( metals[i] == "H" || metals[i] == "He" )
+            continue;
+        auto it = elements.find(metals[i]);
+        DYABLO_ASSERT_HOST_RELEASE( it != elements.end(),
+          "PassiveScalar_IC_constant_metallicity: metal '" << metals[i] << "' is not in the atomic table" );
+        it->second.z_solar *= metallicity;
+    }
+
+    // Grevesse (2010) solar hydrogen mass fraction
+    const real_t X = 0.7380;
+
+    // number density coefficients for each metal, n_i/n_H = (nZ/nH)_solar * depletion
     std::vector<real_t> coeff_host(metals.size(), 0.0);
     for( size_t i=0; i<metals.size(); i++ ) {
-        if( metals[i] == "H" )
-            coeff_host[i] = X * (1.0 - Z) / metal_mass[i];
-        else if( metals[i] == "He" )
-            coeff_host[i] = Y * (1.0 - Z) / metal_mass[i];
-        else
-            coeff_host[i] = (1.0 / metal_count_no_hhe) * Z / metal_mass[i];
+        std::string metal_name = metals[i];
+        auto it = elements.find(metal_name);
+        DYABLO_ASSERT_HOST_RELEASE( it != elements.end(),
+          "PassiveScalar_IC_constant_metallicity: metal '" << metals[i] << "' is not in the atomic table" );
+        coeff_host[i] = it->second.z_solar * it->second.depletion;
     }
 
 
@@ -282,6 +316,7 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
                 KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell_U )
     {
         const real_t rho = Uhydro.at(iCell_U, IRHO);
+        const real_t nH = (rho * code_density.convert_to(amu_per_cc)) * X;
 
         // Compute T/mu (in K) from the local hydro state when CIE init is active.
         real_t T_over_mu = 0.0;
@@ -296,10 +331,12 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
             T_over_mu = (p_code / rho) * T_over_mu_factor;
         }
 
+        // Do the element number densities
         for( size_t i=0; i<coeff_view.size(); i++ )
             // Store conserved element number density n_i so hydro transports n_i with mass flux.
-            Umetal.at(iCell_U, i) = (rho * code_density).convert_to(amu_per_cc) * coeff_view(i);
+            Umetal.at(iCell_U, i) = nH * coeff_view(i);
 
+        // Do the ion fractions
         for( size_t i=0; i<n_ions_local; i++ ) {
             if( cie_init_local ) {
                 // 1D linear interpolation in T of the precomputed CIE fraction column
