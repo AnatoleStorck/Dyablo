@@ -73,6 +73,7 @@ public:
       configMap.getValue_in_code_unit<Units::Temperature>("star_formation", "temperature_threshold", "1e4 K") *
       Units::constant_to_code_units(Units::KBOLTZ() / Units::PROTON_MASS())
     ),
+    Z_over_Zsun( configMap.getValue<real_t>("constant_metallicity", "Z_over_Zsun") ),
     rho_m([&]() {
       using Inv_Time = decltype(1 / Units::s());
       using G_units = decltype(Units::NEWTON_G());
@@ -151,12 +152,6 @@ public:
     // Gravitational constant in supercomoving units
     using G_unit = decltype(Units::NEWTON_G());
     const real_t G = Units::physical_to_supercomoving<G_unit>(Units::constant_to_code_units(Units::NEWTON_G()), aexp);
-
-    // Optionally use the metallicity (if present)
-    bool has_metallicity = U.has_field("metallicity");
-    UserData::FieldAccessor UinZ;
-    if (has_metallicity)
-      UinZ = U.getAccessor( {{"metallicity", 0}} );
 
     std::vector<UserData::FieldAccessor::FieldInfo> passive_fields;
     for (int i = 0; i < n_passive_scalars; ++i)
@@ -239,6 +234,8 @@ public:
 
       int Nstar_formed = 0;
 
+      const real_t Z_over_Zsun = this->Z_over_Zsun;
+
       foreach_particle.reduce_particle( "fill_spawned_particles", Pnew,
         KOKKOS_LAMBDA (ParticleData::ParticleIndex iPart, int& Nstar_formed)
       {
@@ -280,12 +277,7 @@ public:
         Pnew_data.at(iPart, IMASS) = Mparticle;
         Pnew_data.at(iPart, IBIRTHMASS) = Mparticle;
         Pnew_data.at(iPart, IID) = iPart; // assign unique id based on particle index in this array (is this right?)
-        if (has_metallicity) {
-          real_t Zcell = UinZ.at_ivar(iCell, 0) / q.rho;
-          Pnew_data.at(iPart, IMETALLICITY) = Zcell;
-          // Need to update cell metallicity to account for change in density
-          UinZ.at_ivar(iCell, 0) -= Zcell * Mparticle / Vcell;
-        }
+        Pnew_data.at(iPart, IMETALLICITY) = Z_over_Zsun * 0.0134; // Assuming constant metallicity
 
         // Deplete the gas and passive scalars following SF
         const real_t rho_old = q.rho;
@@ -328,6 +320,7 @@ private:
   std::string star_family;
 
   real_t rho_threshold_physical, P_over_rho_threshold_physical;
+  real_t Z_over_Zsun;
   real_t rho_m;
   real_t epsilon_star;
   int n_passive_scalars;
