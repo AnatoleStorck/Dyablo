@@ -63,8 +63,6 @@ public:
     timers          ( timers ),
     E_SNII_physical ( configMap.getValue_in_code_unit<Units::Energy>("star_feedback", "E_SNII", "1e51 erg") ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ),
-    // meant to be temporary until we have proper metallicity evolution and SNII yields
-    metallicity_uniform     ( configMap.getValue<real_t>("constant_metallicity", "metallicity") ),
     star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "star") ),
     n_passive_scalars( configMap.getValue<int>("passive_scalars", "n_passive_scalars",
         configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", {}).size()) )
@@ -103,13 +101,7 @@ public:
     std::vector<UserData::FieldAccessor_FieldInfo>
       Uin_infos = {{"rho", IRho},    {"e_tot", IE_tot},    {"rho_vx", IRho_vx},    {"rho_vy", IRho_vy},    {"rho_vz", IRho_vz},    {"feedback_rho_added", IRho_added}};
     std::vector<UserData::ParticleAccessor_AttributeInfo>
-      pinfos = {{"mass", IMASS}, {"birth_mass", IBIRTHMASS}, {"vx", IVX}, {"vy", IVY}, {"vz", IVZ}, {"birth_time", IBIRTH}};
-
-    // bool has_metallicity = U.has_field("metallicity");
-    // if (has_metallicity) {
-    //   Uin_infos.push_back( {"metallicity", IRho_Z} );
-    //   pinfos.push_back( {"metallicity", IMETAL} );
-    // }
+      pinfos = {{"mass", IMASS}, {"birth_mass", IBIRTHMASS}, {"vx", IVX}, {"vy", IVY}, {"vz", IVZ}, {"birth_time", IBIRTH}, {"metallicity", IMETAL}};
 
     std::vector<UserData::FieldAccessor_FieldInfo> passive_fields;
     for (int i = 0; i < n_passive_scalars; ++i)
@@ -157,11 +149,11 @@ public:
       // get mass of stars that leave MS in current time step based on
       // Raiteri et al. 1996 and assuming a Salpeter IMF.
       // Check if M1-M2 mass range is within CCSN progenitor mass range (8-40 solar masses)
-      real_t temp_metallicity = metallicity_uniform;
+      real_t particle_metallicity = Pdata.at(iPart, IMETAL);
 
       // get upper and lower mass limits of stars that die in current timestep based on Raiteri et al. (1996)
-      real_t M1 = timedelay_SNII::raiteri_ms_mass(part_age_phys_yr, temp_metallicity);
-      real_t M2 = timedelay_SNII::raiteri_ms_mass(part_age_phys_yr + dt_phys_yr, temp_metallicity);
+      real_t M1 = timedelay_SNII::raiteri_ms_mass(part_age_phys_yr, particle_metallicity);
+      real_t M2 = timedelay_SNII::raiteri_ms_mass(part_age_phys_yr + dt_phys_yr, particle_metallicity);
 
       // If the entire mass range is outside the SNII progenitor mass range, skip
       if (M1 < 8.0 || M2 > 40.0) return;
@@ -218,10 +210,6 @@ public:
         Kokkos::atomic_add(&Uin.at(iCell, IRho_vx), rho_loss * part_vel[IX]);
         Kokkos::atomic_add(&Uin.at(iCell, IRho_vy), rho_loss * part_vel[IY]);
         Kokkos::atomic_add(&Uin.at(iCell, IRho_vz), rho_loss * part_vel[IZ]);
-        // if (has_metallicity) {
-        //   real_t Z_loss = yield_SNII + (1 - yield_SNII) * Pdata.at(iPart, IMETAL);
-        //   Kokkos::atomic_add(&Uin.at(iCell, IRho_Z), rho_loss * Z_loss);
-        // }
 
         // Update particle properties
         Pdata.at(iPart, IMASS) -= Mloss;
@@ -269,7 +257,6 @@ private:
 
   bool cosmology;
 
-  real_t metallicity_uniform;
   std::string star_family;
   int n_passive_scalars;
 };
