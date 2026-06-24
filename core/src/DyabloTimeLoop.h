@@ -838,9 +838,11 @@ public:
       }
     }
 
+    timers.get("AMR").start();
     timers.get("MPI ghosts").start();
     GhostCommunicator ghost_comm(*m_amr_mesh, U.getShape(), ghost_count, false, m_communicator);
     timers.get("MPI ghosts").stop();
+     timers.get("AMR").stop();
 
     auto communicate_ghosts = [&](std::vector< std::string > exchange_vars)
     {
@@ -904,27 +906,30 @@ public:
       }
     }
 
-    timers.get("AMR") .start();
+    timers.get("AMR").start();
     timers.get("MPI ghosts").start();
     communicate_ghosts( fields_to_exchange );
     timers.get("MPI ghosts").stop();
-    timers.get("AMR") .stop();
+    timers.get("AMR").stop();
 
     // Update gravity
     if( gravity_solver )
     {
-      timers.get("Gravity").start();
       if( particle_update_density )
       {
+        timers.get("Particles").start();
         U.new_fields({"rho_g"});
         particle_update_density->update( U, m_scalar_data );
 
         // Backup rho without projected particles
         U.move_field("rho_bak", "rho");
         U.move_field("rho", "rho_g");
+        timers.get("Particles").stop();
       }
 
+      timers.get("Gravity").start();
       gravity_solver->update_gravity_field(U, m_scalar_data);
+      timers.get("Gravity").stop();
 
       // Maybe put this only in CIC move since we don't need it for NGP
       timers.get("AMR").start();
@@ -936,8 +941,6 @@ public:
       // Restore rho before projection (only if particle projection)
       if( particle_update_density )
         U.move_field("rho", "rho_bak");
-      
-      timers.get("Gravity").stop();
     }
 
     // Move particles
@@ -953,7 +956,6 @@ public:
     // Update hydro
     if( godunov_updater )
     {
-      timers.get("Hydrodynamics").start();
       U.new_fields({"rho_next", "e_tot_next", "rho_vx_next", "rho_vy_next", "rho_vz_next"});
       if( !this->has_mhd )
         U.new_fields({"e_int_next"}); // dual-energy internal energy (Hydro state)
@@ -972,6 +974,7 @@ public:
           U.new_fields({"psi_next"});
       }
 
+      timers.get("Hydrodynamics").start();
       godunov_updater->update( U, m_scalar_data );
       timers.get("Hydrodynamics").stop();
 
