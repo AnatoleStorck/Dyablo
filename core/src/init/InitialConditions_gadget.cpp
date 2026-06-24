@@ -196,7 +196,7 @@ public:
     // particles - so star formation and stellar feedback have a valid destination.
     if (!U.has_ParticleArray("star")) {
         U.new_ParticleArray("star", 0);
-        for (const char* attr : { "vx", "vy", "vz", "mass", "birth_mass", "id", "birth_time" })
+        for (const char* attr : { "vx", "vy", "vz", "mass", "birth_mass", "id", "birth_time", "metallicity" })
             U.new_ParticleAttribute("star", attr);
     }
   }
