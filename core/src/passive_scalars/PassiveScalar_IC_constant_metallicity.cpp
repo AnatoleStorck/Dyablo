@@ -56,7 +56,7 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
 
   //std::vector<std::string> passive_names;
 
-  const real_t metallicity;
+  const real_t Z_over_Zsun;
   const bool cie_init;
   std::string data_path;
   const std::vector<std::string> metals;
@@ -76,7 +76,7 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
         std::string passive_scalar_names) :
     foreach_cell(foreach_cell),
     //passive_names(passive_scalar_names),
-    metallicity ( configMap.getValue<real_t>("constant_metallicity", "metallicity", 0.0) ),
+    Z_over_Zsun ( configMap.getValue<real_t>("constant_metallicity", "Z_over_Zsun") ),
     cie_init    ( configMap.getValue<bool>("constant_metallicity", "cie_initialization", false) ),
     data_path   ( configMap.getValue<std::string>("cooling", "data_path") ),
     metals      ( configMap.getValue<std::vector<std::string>>("constant_metallicity", "metals", std::vector<std::string>{}) ),
@@ -262,7 +262,22 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
         auto it = elements.find(metals[i]);
         DYABLO_ASSERT_HOST_RELEASE( it != elements.end(),
           "PassiveScalar_IC_constant_metallicity: metal '" << metals[i] << "' is not in the atomic table" );
-        it->second.z_solar *= metallicity;
+        it->second.z_solar *= Z_over_Zsun;
+    }
+
+    // Correct the depletion factors to the given metallicity.
+    real_t loc_z = fmax(12.0 + log10(elements["O"].z_solar * Z_over_Zsun / (elements["H"].z_solar + 1E-20)), 5.0);
+    real_t y;
+    if (loc_z > 8.10)
+        y = 2.21 + 1.00 * (8.69 - loc_z);
+    else
+        y = 0.96 + 3.10 * (8.69 - loc_z);
+    real_t y_ratio = fmax(fmin(pow(10.0, 2.21) / pow(10.0, y), 1.0), 0.0);
+    for( size_t i=0; i<metals.size(); i++ ) {
+      auto it = elements.find(metals[i]);
+      DYABLO_ASSERT_HOST_RELEASE( it != elements.end(),
+        "PassiveScalar_IC_constant_metallicity: metal '" << metals[i] << "' is not in the atomic table" );
+      it->second.depletion = 1.0 - ((1.0 - it->second.depletion) * y_ratio);
     }
 
     // Grevesse (2010) solar hydrogen mass fraction
