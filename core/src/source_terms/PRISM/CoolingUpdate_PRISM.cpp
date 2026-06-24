@@ -176,6 +176,8 @@ private:
   std::map<std::string, int> elem2atomicnum{};
   int ion_counts_total = 0;
 
+  real_t Z_over_Zsun;
+
   // RT groups
   int n_groups;
   std::vector<real_t> rt_groups_lower;
@@ -206,6 +208,7 @@ public:
         cosmo_run       ( configMap.getValue<bool>("cosmology", "active", false)),
         data_path       ( configMap.getValue<std::string>("cooling", "data_path")),
         ions            ( configMap.getValue<std::vector<std::string>>("cooling", "ions" ) ),
+        Z_over_Zsun     ( configMap.getValue<real_t>("constant_metallicity", "Z_over_Zsun")),
         rt_groups_lower ( configMap.getValue<std::vector<real_t>>("rad", "photon_groups_lower",
                           {13.6, 15.2, 24.59, 54.42}) ),
         rt_groups_upper ( configMap.getValue<std::vector<real_t>>("rad", "photon_groups_upper",
@@ -327,7 +330,8 @@ public:
     real_t dt_s = (dt * code_time).convert_to(Units::second());
 
     const real_t gamma0 = this->policy_params.policy_params.gamma0;
-    const real_t Z_over_Zsun = this->policy_params.policy_params.Z_over_Zsun;
+
+    const real_t Z_over_Zsun = this->Z_over_Zsun;
 
     const std::array<int, MAX_ELEMENTS> &nions_and_molecules = this->nions_and_molecules;
     const std::array<int, MAX_ELEMENTS> &elems2passive = this->elems2passive;
