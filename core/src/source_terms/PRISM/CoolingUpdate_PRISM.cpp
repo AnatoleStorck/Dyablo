@@ -191,6 +191,8 @@ private:
 
   real_t T_blackbody;
 
+  int reduce_chunk_size;
+
   RTZ_type rtz_solver;
 
 public:
@@ -220,6 +222,7 @@ public:
     c_tilde = (c_rad * code_velocity).convert_to(Units::SPEEDOFLIGHT());
     n_groups           = configMap.getValue<int>("rad", "n_groups", 4);
     T_blackbody        = configMap.getValue<real_t>("cooling", "T_blackbody", 1e4);
+    reduce_chunk_size  = configMap.getValue<int>("cooling", "reduce_chunk_size", 16);
     PRISM::parseIonInputs(
       ions,
       this->nions_and_molecules, this->elems2passive, this->ions2passive, this->elem2atomicnum, this->ion_counts, this->molecule_counts,
@@ -357,7 +360,11 @@ public:
     int max_iter_reached = 0;
 
     // ------ Call PRISM cooling update on each cell ------
-    foreach_cell.reduce_cell( "CoolingUpdate_PRISM", Uin.getShape(),
+    // Dynamic scheduling (vs the default static, contiguous-per-thread split)
+    // is essential when using OpenMP: the cooling solve is far more expensive in
+    // localized, spatially-clustered regions, which under static scheduling strand
+    // a few threads while the rest go idle.
+    foreach_cell.reduce_cell_load_balanced( "CoolingUpdate_PRISM", Uin.getShape(), reduce_chunk_size,
       KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell, int& max_iter_reached_local ) {
         const real_t gamma_m1 = gamma0 - 1.0;
 
