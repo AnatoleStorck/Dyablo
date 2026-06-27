@@ -498,6 +498,55 @@ public:
     reduce_cell(kernel_name, iter_space, f, Kokkos::Sum<Value_t>(reducer)...);
   }
 
+  /**
+   * Same as reduce_cell but uses dynamic (work-stealing) scheduling instead of
+   * the default static scheduling. Intended for kernels whose per-cell cost is
+   * highly non-uniform and spatially clustered.
+   * @param chunk_size number of cells handed out per scheduling unit. Keep it
+   *        smaller than a block (bx*by*bz) so the cells of a single expensive
+   *        octant are spread across threads; <=0 lets Kokkos pick a default.
+   *        Dynamic scheduling is ignored on GPUs.
+   **/
+  template <typename IterationSpace_t, typename Function, typename... Reducer_t>
+  void reduce_cell_load_balanced(const std::string& kernel_name, const IterationSpace_t& iter_space, int chunk_size, const Function& f, const Reducer_t&... reducer) const
+  {
+    uint32_t bx = iter_space.bx();
+    uint32_t by = iter_space.by();
+    uint32_t bz = iter_space.bz();
+    uint32_t nbCellsPerBlock = bx*by*bz;
+    uint32_t nbOcts = iter_space.iOct_count();
+
+    auto policy = Kokkos::RangePolicy<Kokkos::Schedule<Kokkos::Dynamic>>(0, nbCellsPerBlock*nbOcts);
+    if( chunk_size > 0 )
+      policy.set_chunk_size(chunk_size);
+
+    Kokkos::parallel_reduce( kernel_name, policy,
+      KOKKOS_LAMBDA( uint32_t index, typename Reducer_t::value_type&... update )
+    {
+      uint32_t iOct = index/nbCellsPerBlock;
+      index = index%nbCellsPerBlock;
+
+      uint32_t k = index/(bx*by);
+      uint32_t j = (index - k*bx*by)/bx;
+      uint32_t i = index - j*bx - k*bx*by;
+
+      CellIndex iCell = iter_space.getCellIndex(iOct, i, j, k);
+      f( iCell, update... );
+    }, reducer...);
+  }
+
+  template <typename Function, typename... Reducer_t>
+  void reduce_cell_load_balanced(const std::string& kernel_name, const CellArray_shape& iter_space, int chunk_size, const Function& f, const Reducer_t&... reducer) const
+  {
+    reduce_cell_load_balanced(kernel_name, IterationSpace_fullArray(iter_space), chunk_size, f, reducer...);
+  }
+
+  template <typename Function, typename... Reducer_t>
+  void reduce_cell_load_balanced(const std::string& kernel_name, const CellArray_global_ghosted& iter_space, int chunk_size, const Function& f, const Reducer_t&... reducer) const
+  {
+    reduce_cell_load_balanced(kernel_name, IterationSpace_fullArray(iter_space), chunk_size, f, reducer...);
+  }
+
   // TODO : remove legacy functions
   template <typename Function>
   void foreach_cell(const std::string& kernel_name, const CellArray_shape& iter_space, const Function& f) const
