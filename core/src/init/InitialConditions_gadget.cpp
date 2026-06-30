@@ -176,28 +176,28 @@ public:
     _read(1, "PartType1", "dark_matter");
     _read(2, "PartType2", "disk");
     _read(3, "PartType3", "bulge");
-    _read(4, "PartType4", "star");
+    _read(4, "PartType4", "stars");
     _read(5, "PartType5", "sink");
 
     int mpi_rank = GlobalMpiSession::get_comm_world().MPI_Comm_rank();
     if (mpi_rank == 0)
-        std::cout << "Merge all star-like particles into the 'star' family" << std::endl;
-    if (U.has_ParticleArray("star")) {
+        std::cout << "Merge all star-like particles into the 'stars' family" << std::endl;
+    if (U.has_ParticleArray("stars")) {
         if (U.has_ParticleArray("bulge")) {
-            U.merge_particles_if("star", "bulge", "mass");
+            U.merge_particles_if("stars", "bulge", "mass");
         }
         if (U.has_ParticleArray("disk")) {
-            U.merge_particles_if("star", "disk", "mass");
+            U.merge_particles_if("stars", "disk", "mass");
         }
     }
 
-    // Keep "dark_matter" and "star" as separate families (see [particles] families).
-    // Ensure the "star" family always exists - even when the snapshot has no star
+    // Keep "dark_matter" and "stars" as separate families (see [particles] families).
+    // Ensure the "stars" family always exists - even when the snapshot has no star
     // particles - so star formation and stellar feedback have a valid destination.
-    if (!U.has_ParticleArray("star")) {
-        U.new_ParticleArray("star", 0);
+    if (!U.has_ParticleArray("stars")) {
+        U.new_ParticleArray("stars", 0);
         for (const char* attr : { "vx", "vy", "vz", "mass", "birth_mass", "id", "birth_time", "metallicity" })
-            U.new_ParticleAttribute("star", attr);
+            U.new_ParticleAttribute("stars", attr);
     }
   }
 

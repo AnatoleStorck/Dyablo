@@ -174,7 +174,7 @@ public:
     bpass_data_path ( configMap.getValue<std::string>(
                         "star_feedback", "bpass_data_path",
                         "/data/anatole/BPASS") ),
-    star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "star") ),
+    star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "stars") ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ),
     photon_rates    ( "BPASS_photon_rates",
                       N_METALS, N_AGES, n_groups > 0 ? n_groups : 1 )
