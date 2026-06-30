@@ -60,7 +60,7 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
   const bool cie_init;
   std::string data_path;
   const std::vector<std::string> metals;
-  const std::vector<real_t> metal_mass;
+  const std::vector<std::string> passive_scalar_names;
   const std::vector<std::string> ions;
   const std::vector<real_t> ion_fracs;
   const real_t gamma0;
@@ -80,7 +80,7 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
     cie_init    ( configMap.getValue<bool>("constant_metallicity", "cie_initialization", false) ),
     data_path   ( configMap.getValue<std::string>("cooling", "data_path") ),
     metals      ( configMap.getValue<std::vector<std::string>>("constant_metallicity", "metals", std::vector<std::string>{}) ),
-    metal_mass  ( configMap.getValue<std::vector<real_t>>("constant_metallicity", "metal_mass", std::vector<real_t>{}) ),
+    passive_scalar_names ( configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", std::vector<std::string>{}) ),
     ions        ( configMap.getValue<std::vector<std::string>>("constant_metallicity", "ions", std::vector<std::string>{}) ),
     ion_fracs   ( configMap.getValue<std::vector<real_t>>("constant_metallicity", "ion_fracs", std::vector<real_t>{}) ),
     gamma0      ( configMap.getValue<real_t>("hydro", "gamma0", 1.4) )
@@ -186,26 +186,33 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
 
   void init( UserData &U ) {
 
-    DYABLO_ASSERT_HOST_RELEASE( metals.size() == metal_mass.size(), "PassiveScalar_IC_constant_metallicity : Mismatch between number of metals and metal masses" );
-
     std::vector<UserData::FieldAccessor::FieldInfo> new_metal_fields_info;
-    std::set<std::string> new_metal_fields;
     for( const std::string& metal : metals ) {
         // add the number density field for the metal
         std::string field = "n" + metal;
 
-        new_metal_fields.insert(field);
         VarIndex ivar = new_metal_fields_info.size();
         new_metal_fields_info.push_back({field, ivar});
     }
 
+    // if nCO in passive_scalar_names, add the nCO field
+    bool CO_exists = false;
+    if( std::find(passive_scalar_names.begin(), passive_scalar_names.end(), "nCO") != passive_scalar_names.end() )
+      CO_exists = true;
+
+    std::vector<UserData::FieldAccessor::FieldInfo> new_CO_fields_info;
+    if( CO_exists ) {
+      std::string field = "nCO";
+
+      VarIndex ivar = new_CO_fields_info.size();
+      new_CO_fields_info.push_back({field, ivar});
+    }
+
     std::vector<UserData::FieldAccessor::FieldInfo> new_ion_fields_info;
-    std::set<std::string> new_ion_fields;
     for( const std::string& ion : ions ) {
         // add the ion fraction field for the metal
         std::string field = ion;
 
-        new_ion_fields.insert(field);
         VarIndex ivar = new_ion_fields_info.size();
         new_ion_fields_info.push_back({field, ivar});
     }
@@ -225,6 +232,7 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
 
 
     auto Umetal = U.getAccessor( new_metal_fields_info );
+    auto UCO    = U.getAccessor( new_CO_fields_info );
     auto Uion   = U.getAccessor( new_ion_fields_info );
     auto Uhydro = U.getAccessor( fields_info );
 
@@ -350,6 +358,10 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
         for( size_t i=0; i<coeff_view.size(); i++ )
             // Store conserved element number density n_i so hydro transports n_i with mass flux.
             Umetal.at(iCell_U, i) = nH * coeff_view(i);
+
+        if ( CO_exists ) {
+          UCO.at(iCell_U, 0) = nH * 1e-20; // some small number whatever
+        }
 
         // Do the ion fractions
         for( size_t i=0; i<n_ions_local; i++ ) {
