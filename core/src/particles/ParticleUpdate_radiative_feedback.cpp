@@ -20,7 +20,7 @@ public:
     timers          ( timers ),
     n_groups        ( configMap.getValue<int>("rad", "n_groups", 4) ),
     photon_rate     ( configMap.getValue<real_t>("star_feedback", "photon_rate", 1e49) ),
-    star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "star") ),
+    star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "stars") ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ) {}
 
   ~ParticleUpdate_radiative_feedback() {}

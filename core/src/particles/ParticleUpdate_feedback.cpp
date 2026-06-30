@@ -63,7 +63,7 @@ public:
     timers          ( timers ),
     E_SNII_physical ( configMap.getValue_in_code_unit<Units::Energy>("star_feedback", "E_SNII", "1e51 erg") ),
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ),
-    star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "star") ),
+    star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "stars") ),
     n_passive_scalars( configMap.getValue<int>("passive_scalars", "n_passive_scalars",
         configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", {}).size()) )
   {

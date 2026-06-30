@@ -273,7 +273,7 @@ public:
     timers(timers),
     policy_params(Policy_Params::from_configMap(configMap)),
     cosmology( configMap.getValue<bool>("cosmology", "active", false) ),
-    star_family( configMap.getValue<std::string>("star_feedback", "star_family", "star") ),
+    star_family( configMap.getValue<std::string>("star_feedback", "star_family", "stars") ),
     rho_threshold_physical( configMap.getValue_in_code_unit<Units::Density>("star_formation", "density_threshold", "1e3 proton_mass/cm**3") ),
     m_particle( configMap.getValue_in_code_unit<Units::Mass>("star_formation", "particle_mass", "500 solar_mass") ),
     rho_m([&]() {

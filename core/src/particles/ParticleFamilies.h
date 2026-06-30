@@ -10,7 +10,7 @@ namespace dyablo {
 /***
  * @brief Return the list of particle family names configured for this run.
  *
- * Particles are grouped into named families (e.g. "dark_matter", "star"), each
+ * Particles are grouped into named families (e.g. "dark_matter", "stars"), each
  * stored as its own ParticleArray in UserData. Routines that need to operate on
  * every particle (dt limiter, gravity density projection, position move) iterate
  * over this list; family-specific routines (e.g. stellar feedback) reference a
