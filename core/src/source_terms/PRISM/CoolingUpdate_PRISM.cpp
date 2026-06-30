@@ -143,7 +143,7 @@ namespace PRISM {
 namespace dyablo {
 constexpr bool constant_temperature = false;
 constexpr bool include_H2 = true;
-constexpr bool include_CO = false;
+constexpr bool include_CO = true;
 constexpr bool rt_advect = true;
 constexpr bool include_self_shielding = true;
 
@@ -295,18 +295,22 @@ public:
       }
 
     }
-
     UserData::FieldAccessor Uin_passive = U.getAccessor( passive_in );
     UserData::FieldAccessor Uout_passive = U.getAccessor( passive_out );
 
-
-    // RT accessors    std::vector<UserData::FieldAccessor::FieldInfo> rt_in;
-    //DYABLO_ASSERT_HOST_RELEASE(N_GROUPS == 1, "Only N_GROUPS=1 is currently supported");
-    DYABLO_ASSERT_HOST_RELEASE(foreach_cell.getDim() == 3, "Only 3D is currently supported");
+    // CO
+    std::vector<UserData::FieldAccessor::FieldInfo> CO_in;
+    std::vector<UserData::FieldAccessor::FieldInfo> CO_out;
+    if (include_CO) {
+      std::string field_name = "nCO";
+      CO_in.push_back({field_name.c_str(), 0});
+      CO_out.push_back({field_name.c_str(), 0});
+    }
+    UserData::FieldAccessor Uin_CO = U.getAccessor( CO_in );
+    UserData::FieldAccessor Uout_CO = U.getAccessor( CO_out );
 
     std::vector<UserData::FieldAccessor::FieldInfo> rt_fields;
     rt_fields.reserve(4 * n_groups);
-
     for (int g = 0; g < n_groups; ++g) {
       const int off = 4 * g;
       rt_fields.push_back({"e_rad_"  + std::to_string(g) + "_next", off + 0});
@@ -320,15 +324,15 @@ public:
 
     UserData::FieldAccessor Uout_debug = U.getAccessor({{"PRISM_iter", 0}});
 
-    // Create units
-    // real_t XH = Units::XH().convert_to(Units::one());
-
-    // auto mp_per_cc     = Units::PROTON_MASS() / Units::cm3();
     auto mp_over_kb    = Units::PROTON_MASS() / Units::KBOLTZ();
     auto K = Units::Kelvin();
     auto code_density  = Units::code_units().getUnit<Units::Density>();
     auto code_pressure = Units::code_units().getUnit<Units::Pressure>();
     auto code_time     = Units::code_units().getUnit<Units::Time>();
+    auto code2cm = Units::supercomoving_to_physical<Units::Length>(
+      (1 * Units::code_units().getUnit<Units::Length>()).convert_to(Units::cm()),
+      aexp
+    );
 
     real_t dt_s = (dt * code_time).convert_to(Units::second());
 
@@ -359,6 +363,8 @@ public:
 
     int max_iter_reached = 0;
 
+    ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
+
     // ------ Call PRISM cooling update on each cell ------
     // Dynamic scheduling (vs the default static, contiguous-per-thread split)
     // is essential when using OpenMP: the cooling solve is far more expensive in
@@ -382,7 +388,9 @@ public:
         // Initial state
         auto rho_physical = Units::supercomoving_to_physical<Units::Density>(q.rho, aexp) * code_density;
         auto P_physical = Units::supercomoving_to_physical<Units::Pressure>(p_thermal, aexp) * code_pressure;
-        // real_t rho = rho_physical.convert_to(mp_per_cc);
+
+        auto cell_size = cells.getCellSize(iCell);
+        real_t cell_dx_cm = cell_size[IX] * code2cm;
 
         // Compute T/µ
         real_t T_over_mu = (P_physical / rho_physical * mp_over_kb).convert_to(K);
@@ -414,8 +422,12 @@ public:
           }
         }
 
-        // TODO: CO
-        real_t nCO = 0;
+        real_t nCO;
+        if (include_CO)
+          nCO = Uin_CO.at(iCell, 0);
+        else
+          nCO = 0;
+
         real_t out_T_over_mu, out_mu;
         int total_iter_reached;
 
@@ -437,6 +449,7 @@ public:
 
         rtz_solver.solve_chemistry_and_cooling(
           T_over_mu,
+          cell_dx_cm,
           Z_over_Zsun,
           aexp,
           dt_s,
@@ -475,6 +488,10 @@ public:
           for (auto j = 0; j < 3; ++j) {
             Uout_rt.at(iCell, index + j + 1) = F_PHOT[i][j];
           }
+        }
+
+        if (include_CO) {
+          Uout_CO.at(iCell, 0) = nCO;
         }
 
         const real_t p_thermal_new = (out_T_over_mu * Units::Kelvin() * rho_physical / mp_over_kb).convert_to(code_pressure);
