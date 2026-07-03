@@ -273,32 +273,18 @@ struct PassiveScalar_IC_constant_metallicity : public PassiveScalar_IC {
         it->second.z_solar *= Z_over_Zsun;
     }
 
-    // Correct the depletion factors to the given metallicity.
-    real_t loc_z = fmax(12.0 + log10(elements["O"].z_solar * Z_over_Zsun / (elements["H"].z_solar + 1E-20)), 5.0);
-    real_t y;
-    if (loc_z > 8.10)
-        y = 2.21 + 1.00 * (8.69 - loc_z);
-    else
-        y = 0.96 + 3.10 * (8.69 - loc_z);
-    real_t y_ratio = fmax(fmin(pow(10.0, 2.21) / pow(10.0, y), 1.0), 0.0);
-    for( size_t i=0; i<metals.size(); i++ ) {
-      auto it = elements.find(metals[i]);
-      DYABLO_ASSERT_HOST_RELEASE( it != elements.end(),
-        "PassiveScalar_IC_constant_metallicity: metal '" << metals[i] << "' is not in the atomic table" );
-      it->second.depletion = 1.0 - ((1.0 - it->second.depletion) * y_ratio);
-    }
 
     // Grevesse (2010) solar hydrogen mass fraction
     const real_t X = 0.7380;
 
-    // number density coefficients for each metal, n_i/n_H = (nZ/nH)_solar * depletion
+    // number density coefficients for each metal (TOTAL, gas + dust), n_i/n_H = (nZ/nH)_solar
     std::vector<real_t> coeff_host(metals.size(), 0.0);
     for( size_t i=0; i<metals.size(); i++ ) {
         std::string metal_name = metals[i];
         auto it = elements.find(metal_name);
         DYABLO_ASSERT_HOST_RELEASE( it != elements.end(),
           "PassiveScalar_IC_constant_metallicity: metal '" << metals[i] << "' is not in the atomic table" );
-        coeff_host[i] = it->second.z_solar * it->second.depletion;
+        coeff_host[i] = it->second.z_solar;
     }
 
 
