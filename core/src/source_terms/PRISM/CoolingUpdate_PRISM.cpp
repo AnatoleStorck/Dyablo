@@ -189,6 +189,9 @@ private:
 
   real_t T_blackbody;
 
+  bool include_HM12_UVB;
+  real_t UV_background_G0;
+
   int reduce_chunk_size;
 
   RTZ_type rtz_solver;
@@ -220,6 +223,8 @@ public:
     n_groups           = configMap.getValue<int>("rad", "n_groups", 4);
     T_blackbody        = configMap.getValue<real_t>("cooling", "T_blackbody", 1e4);
     reduce_chunk_size  = configMap.getValue<int>("cooling", "reduce_chunk_size", 16);
+    include_HM12_UVB   = configMap.getValue<bool>("cooling", "include_HM12_UVB", true);
+    UV_background_G0   = configMap.getValue<real_t>("cooling", "UV_background_G0", 0.0070977);
     PRISM::parseIonInputs(
       ions,
       this->nions_and_molecules, this->elems2passive, this->ions2passive, this->elem2atomicnum, this->ion_counts, this->molecule_counts,
@@ -227,6 +232,7 @@ public:
     );
     PRISM::parsePhotonGroupInputs(n_groups, rt_groups_lower, rt_groups_upper, this->E_min, this->E_max);
     rtz_solver.set_reduced_speed_of_light_factor(c_tilde);
+    rtz_solver.set_UV_background_G0(UV_background_G0);
     std::array<double, N_GROUPS> E_min_tmp;
     std::array<double, N_GROUPS> E_max_tmp;
     for (int i = 0; i < n_groups; ++i) {
@@ -340,6 +346,7 @@ public:
     const std::array<int, MAX_ELEMENTS> &ions2passive = this->ions2passive;
     // const int n_groups = this->n_groups;
     const RTZ_type& rtz_solver = this->rtz_solver;
+    const bool include_HM12_UVB = this->include_HM12_UVB;
 
     timers.get("CoolingUpdate_PRISM").start();
 
@@ -432,7 +439,7 @@ public:
             .include_collisional_ionization = true,
             .include_photoionization        = true,
             .include_cosmic_ray_ionization  = true,
-            .include_HM12_UVB               = true,
+            .include_HM12_UVB               = include_HM12_UVB,
             .include_dust_recombination     = true,
             .include_charge_exchange        = true,
         };
