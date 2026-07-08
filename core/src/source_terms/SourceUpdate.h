@@ -12,6 +12,7 @@ class SourceUpdate_Photons_Beam;
 class SourceUpdate_Photons_Stromgren;
 class SourceUpdate_Ionization_Stromgren;
 class SourceUpdate_Turbulent_Forcing;
+class SourceUpdate_UV_Background;
 
 template< typename Policy >
 class SourceUpdate_cooling_grackle_table;
@@ -35,6 +36,7 @@ inline bool dyablo::SourceUpdateFactory::init()
   DECLARE_REGISTERED(dyablo::SourceUpdate_cooling_grackle_table<dyablo::HyperbolicPolicy_Hydro>);
   DECLARE_REGISTERED(dyablo::SourceUpdate_cooling_grackle_table<dyablo::HyperbolicPolicy_GLMMHD>);
   DECLARE_REGISTERED(dyablo::SourceUpdate_Turbulent_Forcing);
+  DECLARE_REGISTERED(dyablo::SourceUpdate_UV_Background);
 
 #ifdef DYABLO_USE_PRISM
   DECLARE_REGISTERED(dyablo::CoolingUpdate_PRISM<dyablo::HyperbolicPolicy_Hydro>);
