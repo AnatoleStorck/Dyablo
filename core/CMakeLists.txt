@@ -31,9 +31,9 @@ option (Kokkos_ENABLE_CUDA   "enable Kokkos::Cuda backend" OFF)
 option (Kokkos_ENABLE_HIP   "enable Kokkos::HIP backend" OFF)
 option (Kokkos_ENABLE_SYCL   "enable Kokkos::SyCL backend" OFF)
 option (Kokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC "Use CudaMallocAsync for Kokkos allocations" OFF)
-set    (Kokkos_DIR "Kokkos installation directory or internal source" CACHE PATH ""  )
+set    (Kokkos_DIR "" CACHE PATH "Kokkos installation directory or internal source"  )
 set    (DYABLO_KOKKOS_COMPILE_FLAGS "" CACHE STRING "Compile flags Added to targets including Kokkos (nvccs -G goes here)"   )
-option (DYABLO_USE_FFT "Activate / want FFT" OFF)
+option (DYABLO_USE_FFT "Activate / want FFT" ON)
 
 # Options not forwarded from superbuild
 option (DYABLO_BUILD_DOC  "Enable / disable documentation build" OFF)
