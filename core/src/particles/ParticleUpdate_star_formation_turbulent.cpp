@@ -195,10 +195,10 @@ SFProps compute_sf_props(
   for( int i = 0; i < 3; ++i )
   for( int j = 0; j < 3; ++j )
   {
-    real_t a = A[i][j];
+    real_t s = 0.5 * ( A[i][j] + A[j][i] );
     if( i == j )
-      a -= div_v / 3.0;
-    sigma2 += a * a;
+      s -= div_v / 3.0;
+    sigma2 += s * s;
   }
   sigma2 *= dx * dx;
 
