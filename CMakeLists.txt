@@ -40,7 +40,7 @@ option (Kokkos_ENABLE_HIP "Enable Kokkos::HIP backend" OFF)
 set( Kokkos_ARCH  "" CACHE STRING "List of architectures to set for Kokkos : -DKokkos_ARCH_<arch>=ON")
 set( DYABLO_CMAKE_ARGS "" CACHE STRING "Additional cmake command line arguments to forward to Dyablo subproject"  )
 
-option (DYABLO_USE_FFT "Activate / want FFT" OFF)
+option (DYABLO_USE_FFT "Activate / want FFT" ON)
 
 include (ExternalProject)
 set (DYABLO_EXTERNALPROJECT_DEPENDENCIES)
