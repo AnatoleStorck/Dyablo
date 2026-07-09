@@ -10,6 +10,5 @@ src/doxygen
 .vscode/**
 *.gif
 *.ipynb
-*.py
 *.code-workspace
 src/Doxyfile
