@@ -9,7 +9,8 @@
 namespace timedelay_SNII {
 
   // Raiteri et al. (1996)
-  inline real_t raiteri_ms_mass( real_t t, real_t Z ) {
+  KOKKOS_INLINE_FUNCTION
+  real_t raiteri_ms_mass( real_t t, real_t Z ) {
     
     // clip metallicity
     real_t Z_eff;
@@ -39,7 +40,8 @@ namespace timedelay_SNII {
   }
 
   // Kroupa (2001), 0.1-100 Msun
-  inline real_t kroupa_imf( real_t m1, real_t m2) {
+  KOKKOS_INLINE_FUNCTION
+  real_t kroupa_imf( real_t m1, real_t m2) {
     real_t A = 0.2244557;
     real_t ind = -2.3;
     return (-A/(ind + 1)) * ( std::pow(m2, ind+1) - std::pow(m1, ind+1) );

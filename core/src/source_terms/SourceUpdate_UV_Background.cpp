@@ -13,6 +13,12 @@ namespace dyablo {
 
 namespace {
 
+enum InjectionMode {
+  FLOOR,      // e_rad = max(e_rad, N_g), fluxes untouched
+  DIRICHLET,  // e_rad = N_g, fluxes = 0 (isotropic bath)
+  BEAM        // e_rad = N_g, F = flux_frac·c̃·N_g along the inward normal
+};
+
 // Physical constants used to convert the tabulated spectrum to photon densities.
 constexpr real_t HC_EV_A = 12398.419;       // h*c [eV * Å]
 constexpr double H_ERG_S = 6.62607015e-27;  // Planck constant [erg * s]
@@ -158,11 +164,6 @@ double integrate_uvb_photon_density(
 class SourceUpdate_UV_Background : public SourceUpdate
 {
 private:
-  enum InjectionMode {
-    FLOOR,      // e_rad = max(e_rad, N_g), fluxes untouched
-    DIRICHLET,  // e_rad = N_g, fluxes = 0 (isotropic bath)
-    BEAM        // e_rad = N_g, F = flux_frac·c̃·N_g along the inward normal
-  };
 
   ForeachCell& foreach_cell;
   Timers& timers;

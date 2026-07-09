@@ -57,9 +57,15 @@ set( plugins_src
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Photons_Beam.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Photons_Stromgren.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Ionization_Stromgren.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Turbulent_Forcing.cpp
+
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_UV_Background.cpp
 )
+if (DYABLO_USE_FFT)
+    list(APPEND plugins_src
+        ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Turbulent_Forcing.cpp
+    )
+endif()
+
 
 set( ic_src
     ${CMAKE_CURRENT_SOURCE_DIR}/init/InitialConditions_uniform.cpp
