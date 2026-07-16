@@ -193,6 +193,7 @@ private:
   real_t UV_background_G0;
 
   int reduce_chunk_size;
+  bool sort_cells_by_cost;
 
   RTZ_type rtz_solver;
 
@@ -223,6 +224,7 @@ public:
     n_groups           = configMap.getValue<int>("rad", "n_groups", 4);
     T_blackbody        = configMap.getValue<real_t>("cooling", "T_blackbody", 1e4);
     reduce_chunk_size  = configMap.getValue<int>("cooling", "reduce_chunk_size", 16);
+    sort_cells_by_cost = configMap.getValue<bool>("cooling", "sort_cells_by_cost", true);
     include_HM12_UVB   = configMap.getValue<bool>("cooling", "include_HM12_UVB", true);
     UV_background_G0   = configMap.getValue<real_t>("cooling", "UV_background_G0", 0.0070977);
     PRISM::parseIonInputs(
@@ -363,7 +365,7 @@ public:
     Kokkos::Experimental::UniqueToken<exec_space> token;
     Kokkos::View<CompactIonData*> compact_data("PRISM_compact_data", token.size());
 
-    int max_iter_reached = 0;
+    Kokkos::View<int> max_iter_reached_device("PRISM_max_iter_reached");
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
@@ -372,8 +374,12 @@ public:
     // is essential when using OpenMP: the cooling solve is far more expensive in
     // localized, spatially-clustered regions, which under static scheduling strand
     // a few threads while the rest go idle.
-    foreach_cell.reduce_cell_load_balanced( "CoolingUpdate_PRISM", Uin.getShape(), reduce_chunk_size,
-      KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell, int& max_iter_reached_local ) {
+      foreach_cell.foreach_cell_load_balanced_sorted( "CoolingUpdate_PRISM", Uin.getShape(), reduce_chunk_size, sort_cells_by_cost,
+      KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell ) -> real_t {
+        return Uout_debug.at(iCell, 0);
+      },
+      KOKKOS_LAMBDA( const ForeachCell::CellIndex& iCell ) {
+
         const real_t gamma_m1 = gamma0 - 1.0;
 
         Kokkos::Experimental::AcquireUniqueToken<exec_space> slot(token);
@@ -462,10 +468,8 @@ public:
 
         Uout_debug.at(iCell, 0) = total_iter_reached;
 
-
-        if (total_iter_reached > max_iter_reached_local) {
-          max_iter_reached_local = total_iter_reached;
-        }
+        if( total_iter_reached > max_iter_reached_device() )
+          Kokkos::atomic_max(&max_iter_reached_device(), total_iter_reached);
 
         // Write back element number densities and ion fractions
         for (int i = 1; i < MAX_ELEMENTS; ++i) {
@@ -496,10 +500,11 @@ public:
         if constexpr ( Policy::has_dual_energy() )
           u.e_int += delta_e_int;
         policy.setConsState(Uin, iCell, u);
-      },
-      Kokkos::Max<int>(max_iter_reached)
+      }
     );
 
+    int max_iter_reached = 0;
+    Kokkos::deep_copy(max_iter_reached, max_iter_reached_device);
     scalar_data.set("PRISM_max_iterations_reached", max_iter_reached);
 
     Kokkos::fence(); // Make sure all updates are finished before stopping timer
