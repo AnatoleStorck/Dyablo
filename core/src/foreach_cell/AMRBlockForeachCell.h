@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Kokkos_Sort.hpp>
+
 #include "utils/config/ConfigMap.h"
 #include "foreach_cell/AMRBlockForeachCell_CellArray.h"
 
@@ -545,6 +547,79 @@ public:
   void reduce_cell_load_balanced(const std::string& kernel_name, const CellArray_global_ghosted& iter_space, int chunk_size, const Function& f, const Reducer_t&... reducer) const
   {
     reduce_cell_load_balanced(kernel_name, IterationSpace_fullArray(iter_space), chunk_size, f, reducer...);
+  }
+
+  /**
+   * @param sort when false, skip the sort and keep memory order (identity
+   *        permutation).
+   * @param cost a const CellIndex& -> real_t functor compatible with Kokkos
+   *        returning the estimated cost of a cell. Only the ordering it induces
+   *        matters, not its scale.
+   **/
+  template <typename IterationSpace_t, typename CostFunction, typename Function>
+  void foreach_cell_load_balanced_sorted(const std::string& kernel_name, const IterationSpace_t& iter_space, int chunk_size, bool sort, const CostFunction& cost, const Function& f) const
+  {
+    uint32_t bx = iter_space.bx();
+    uint32_t by = iter_space.by();
+    uint32_t bz = iter_space.bz();
+    uint32_t nbCellsPerBlock = bx*by*bz;
+    uint32_t nbOcts = iter_space.iOct_count();
+    uint32_t nbCells = nbCellsPerBlock*nbOcts;
+
+    Kokkos::View<uint32_t*> order( Kokkos::view_alloc(Kokkos::WithoutInitializing, kernel_name+"_order"), nbCells );
+
+    if( sort )
+    {
+      Kokkos::View<float*> keys( Kokkos::view_alloc(Kokkos::WithoutInitializing, kernel_name+"_cost"), nbCells );
+      Kokkos::parallel_for( kernel_name+"_cost", nbCells,
+        KOKKOS_LAMBDA( uint32_t index )
+      {
+        uint32_t iOct = index/nbCellsPerBlock;
+        uint32_t rem = index%nbCellsPerBlock;
+
+        uint32_t k = rem/(bx*by);
+        uint32_t j = (rem - k*bx*by)/bx;
+        uint32_t i = rem - j*bx - k*bx*by;
+
+        CellIndex iCell = iter_space.getCellIndex(iOct, i, j, k);
+        keys(index) = -static_cast<float>( cost(iCell) ); // The larger the cost, the earlier it should be scheduled
+        order(index) = index;
+      });
+      Kokkos::Experimental::sort_by_key( Kokkos::DefaultExecutionSpace(), keys, order );
+    }
+    else
+    {
+      Kokkos::parallel_for( kernel_name+"_order", nbCells,
+        KOKKOS_LAMBDA( uint32_t index )
+      {
+        order(index) = index;
+      });
+    }
+
+    auto policy = Kokkos::RangePolicy<Kokkos::Schedule<Kokkos::Dynamic>, Kokkos::LaunchBounds<256, 2>>(0, nbCells);
+    if( chunk_size > 0 )
+      policy.set_chunk_size(chunk_size);
+
+    Kokkos::parallel_for( kernel_name, policy,
+      KOKKOS_LAMBDA( uint32_t index0 )
+    {
+      uint32_t index = order(index0);
+      uint32_t iOct = index/nbCellsPerBlock;
+      index = index%nbCellsPerBlock;
+
+      uint32_t k = index/(bx*by);
+      uint32_t j = (index - k*bx*by)/bx;
+      uint32_t i = index - j*bx - k*bx*by;
+
+      CellIndex iCell = iter_space.getCellIndex(iOct, i, j, k);
+      f( iCell );
+    });
+  }
+
+  template <typename CostFunction, typename Function>
+  void foreach_cell_load_balanced_sorted(const std::string& kernel_name, const CellArray_shape& iter_space, int chunk_size, bool sort, const CostFunction& cost, const Function& f) const
+  {
+    foreach_cell_load_balanced_sorted(kernel_name, IterationSpace_fullArray(iter_space), chunk_size, sort, cost, f);
   }
 
   // TODO : remove legacy functions
