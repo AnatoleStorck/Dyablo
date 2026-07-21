@@ -24,6 +24,8 @@ class SourceUpdate_cooling_grackle_table;
 #ifdef DYABLO_USE_PRISM
 template< typename Policy >
 class CoolingUpdate_PRISM;
+template< typename Policy >
+class CoolingUpdate_PRISM_GPU;
 #endif
 
 } //namespace dyablo
@@ -47,6 +49,7 @@ inline bool dyablo::SourceUpdateFactory::init()
 
 #ifdef DYABLO_USE_PRISM
   DECLARE_REGISTERED(dyablo::CoolingUpdate_PRISM<dyablo::HyperbolicPolicy_Hydro>);
+  DECLARE_REGISTERED(dyablo::CoolingUpdate_PRISM_GPU<dyablo::HyperbolicPolicy_Hydro>);
 #endif
 
   dyablo::load_dyablo_plugins_lib();

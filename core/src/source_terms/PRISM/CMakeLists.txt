@@ -3,6 +3,7 @@ add_library(PRISM "")
 target_sources(PRISM
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/CoolingUpdate_PRISM.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/CoolingUpdate_PRISM_GPU.cpp
   )
 
 target_include_directories(PRISM
