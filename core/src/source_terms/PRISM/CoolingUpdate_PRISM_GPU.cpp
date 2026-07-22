@@ -189,9 +189,6 @@ private:
 
   typename Policy::Params policy_params;
 
-  real_t smallr;
-  real_t smallc;
-  real_t smallp;
   bool cosmo_run;
   std::string data_path;
 
@@ -203,7 +200,6 @@ private:
   std::array<int, MAX_ELEMENTS> elems2passive{};
   std::array<int, MAX_ELEMENTS> ions2passive{};
   std::map<std::string, int> elem2atomicnum{};
-  int ion_counts_total = 0;
 
   // RT groups
   int n_groups;
@@ -274,7 +270,8 @@ public:
     // Safety cap on the number of subcycle iterations per cell
     max_substeps       = configMap.getValue<int>("cooling", "max_substeps", 100000);
     // Cells are processed in batches of at most this many, sized to bound the
-    // per-cell solver-state pools (CompactIonData alone is ~2.4 kB/cell)
+    // per-cell solver-state pools (CompactIonData alone is ~1.2 kB/cell in the
+    // reduced-precision float build, RTZ_REDUCED_PRECISION; ~2.4 kB in double)
     batch_size         = configMap.getValue<int>("cooling", "batch_size", 1048576);
     // Photon groups depleted below this fraction of their hydro-step-start
     // density stop gating the subcycle timestep (optically thick cells
@@ -298,15 +295,14 @@ public:
       E_max_tmp[i] = this->E_max[i];
     }
     rtz_solver.set_photon_groups(E_min_tmp, E_max_tmp);
-    for (int i = 0; i < MAX_ELEMENTS; ++i)
-      ion_counts_total += nions_and_molecules[i];
 
-    // Work items for the team-parallel ion update: every true ion stage
-    // (n_ions = atomic number + 1, as in initialize_elements) of every element
-    // in the network. Molecule slots (H2) are handled by molecular_step.
+    // Work items for the team-parallel metal-ion update (metal_ions_step): every
+    // true ion stage (n_ions = atomic number + 1, as in initialize_elements) of
+    // every metal (Z >= 3) in the network. H and He are updated separately by
+    // HandHe_ions_step; molecule slots (H2) are handled by molecular_step.
     {
       std::vector<uint16_t> ion_map_host;
-      for (int i = 1; i < MAX_ELEMENTS; ++i) {
+      for (int i = 3; i < MAX_ELEMENTS; ++i) {
         if (ions2passive[i] == -1) continue;
         for (int j = 0; j <= i; ++j)
           ion_map_host.push_back( static_cast<uint16_t>((i << 8) | j) );
@@ -474,8 +470,9 @@ public:
     }
 
     // ------ Per-cell solver-state pools, persisted across the step kernels ------
-    // CompactIonData alone is ~2.4 kB per cell, so the pools are sized for at
-    // most batch_size cells and the cell list is processed in batches.
+    // CompactIonData alone is ~1.2 kB per cell in the reduced-precision float
+    // build (RTZ_REDUCED_PRECISION; ~2.4 kB in double), so the pools are sized
+    // for at most batch_size cells and the cell list is processed in batches.
     const uint32_t pool_size = std::min<uint32_t>( batch_size, nbCells );
     if( ion_state_pool.extent(0) < pool_size )
     {
@@ -503,6 +500,8 @@ public:
     const int ions_team_size = this->ions_team_size;
     const int max_substeps = this->max_substeps;
     const double rad_residual_floor = this->rad_residual_floor;
+
+    int ions_team_size_clamped = -1;
 
     for( uint32_t batch_start = 0; batch_start < nbCells; batch_start += pool_size )
     {
@@ -702,14 +701,16 @@ public:
           };
 
           // ions_team_size (network stages rounded to warps) unless the
-          // functor's resource use forces a smaller block
-          const int team_size = std::min( ions_team_size,
-            Kokkos::TeamPolicy<>(n_active, Kokkos::AUTO)
-              .set_scratch_size(0, Kokkos::PerTeam(ion_scratch))
-              .team_size_max(ions_functor, Kokkos::ParallelForTag()) );
+          // functor's resource use forces a smaller block; fixed across passes,
+          // so query it only once
+          if( ions_team_size_clamped < 0 )
+            ions_team_size_clamped = std::min( ions_team_size,
+              Kokkos::TeamPolicy<>(n_active, Kokkos::AUTO)
+                .set_scratch_size(0, Kokkos::PerTeam(ion_scratch))
+                .team_size_max(ions_functor, Kokkos::ParallelForTag()) );
 
           Kokkos::parallel_for( "PRISM_ions",
-            Kokkos::TeamPolicy<>(n_active, team_size)
+            Kokkos::TeamPolicy<>(n_active, ions_team_size_clamped)
               .set_scratch_size(0, Kokkos::PerTeam(ion_scratch)),
             ions_functor );
         }
