@@ -14,7 +14,7 @@
 	url = https://github.com/LLNL/units.git
 [submodule "external/gizmo_rtz"]
 	path = core/src/source_terms/PRISM/gizmo_rtz
-	url = git@github.com:HarleyKatz/gizmo_rtz.git
+	url = git@github.com:AnatoleStorck/gizmo_rtz.git
 [submodule "external/kokkos-fft"]
 	path = external/kokkos-fft
 	url = https://github.com/kokkos/kokkos-fft.git
