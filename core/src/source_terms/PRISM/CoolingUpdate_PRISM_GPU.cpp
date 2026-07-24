@@ -678,24 +678,34 @@ public:
               cs.dust_ratio, UV_G0, cs.N_phot_new, cs.sub );
         });
 
-        // (4) ions: one team per cell. Hydrogen and helium first, sequentially
-        // (exact Gauss-Seidel), then the metals in parallel (one thread per ion
-        // stage) against the updated H/He.
+        // (4a) H/He ions: one thread per cell. Hydrogen and helium updated
+        // sequentially (exact Gauss-Seidel) — the stiff part of the network,
+        // serial by construction, so a plain RangePolicy keeps every lane busy
+        // instead of one lane per team.
+        Kokkos::parallel_for( "PRISM_ions_HandHe", Kokkos::RangePolicy<>(0, n_active),
+          KOKKOS_LAMBDA( uint32_t idx )
+        {
+          const uint32_t s = active(idx);
+          if( done_pool(s) ) return;
+          PrismCellState& cs = cell_state(s);
+
+          HandHe_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+              ddt_pool(s), elements, ion_state(s), tabData, flags,
+              cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
+              cs.N_phot_new, cs.sub );
+        });
+
+        // (4b) metal ions: one team per cell, one thread per ion stage in
+        // parallel (Jacobi) against the updated H/He.
         {
           auto ions_functor = KOKKOS_LAMBDA( const Kokkos::TeamPolicy<>::member_type& team )
           {
             const uint32_t s = active(team.league_rank());
             if( done_pool(s) ) return;
             PrismCellState& cs = cell_state(s);
-            const double ddt = ddt_pool(s);
-
-            HandHe_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-                team, ddt, elements, ion_state(s), tabData, flags,
-                cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
-                cs.N_phot_new, cs.sub );
 
             metal_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-                team, ddt, elements, ion_state(s), tabData, flags,
+                team, ddt_pool(s), elements, ion_state(s), tabData, flags,
                 cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
                 cs.N_phot_new, ion_map, n_ion_work, cs.sub );
           };
@@ -709,7 +719,7 @@ public:
                 .set_scratch_size(0, Kokkos::PerTeam(ion_scratch))
                 .team_size_max(ions_functor, Kokkos::ParallelForTag()) );
 
-          Kokkos::parallel_for( "PRISM_ions",
+          Kokkos::parallel_for( "PRISM_ions_metals",
             Kokkos::TeamPolicy<>(n_active, ions_team_size_clamped)
               .set_scratch_size(0, Kokkos::PerTeam(ion_scratch)),
             ions_functor );
