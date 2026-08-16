@@ -160,6 +160,8 @@ struct PrismCellState {
   Array2D_RT F_PHOT;                       // committed photon fluxes
   std::array<double, N_GROUPS> N_phot_new; // radiation step -> commit
   std::array<double, N_GROUPS> phot_att;   // radiation step -> commit (flux attenuation)
+  std::array<double, N_GROUPS> dNpdt;      // rt_smooth: operator-split RT increments,
+  Array2D_RT dFpdt;                        // injected during the subcycle (zero when off)
   double nCO;        // committed CO number density
   double loc_rho;    // pre-depletion mass density [amu/cm^3]
   double dx_cm;      // cell size [cm]
@@ -221,6 +223,7 @@ private:
   int max_substeps;
   int batch_size;
   real_t rad_residual_floor;
+  bool rt_smooth;
 
   // Flattened (element << 8 | stage) work items for the team-parallel Jacobi
   // metal-ion update: one entry per true ion stage of the configured network
@@ -273,11 +276,8 @@ public:
     // per-cell solver-state pools (CompactIonData alone is ~1.2 kB/cell in the
     // reduced-precision float build, RTZ_REDUCED_PRECISION; ~2.4 kB in double)
     batch_size         = configMap.getValue<int>("cooling", "batch_size", 1048576);
-    // Photon groups depleted below this fraction of their hydro-step-start
-    // density stop gating the subcycle timestep (optically thick cells
-    // otherwise spend thousands of iterations resolving the exponential decay
-    // of already-spent photons). 0 = off (historical behavior).
-    rad_residual_floor = configMap.getValue<real_t>("cooling", "rad_residual_floor", 0.0);
+    rad_residual_floor = configMap.getValue<real_t>("cooling", "rad_residual_floor", 1e-3);
+    rt_smooth          = configMap.getValue<bool>("cooling", "rt_smooth", true);
     include_HM12_UVB   = configMap.getValue<bool>("cooling", "include_HM12_UVB", true);
     UV_background_G0   = configMap.getValue<real_t>("cooling", "UV_background_G0", 0.0070977);
     PRISM_GPU::parseIonInputs(
@@ -398,6 +398,17 @@ public:
     UserData::FieldAccessor Uin_rt = U.getAccessor(rt_fields);
     UserData::FieldAccessor Uout_rt = U.getAccessor(rt_fields);
 
+    // Pre-transport photon fields for rt_smooth
+    std::vector<UserData::FieldAccessor::FieldInfo> rt_fields_old;
+    rt_fields_old.reserve(4 * n_groups);
+    for (int g = 0; g < n_groups; ++g) {
+      const int off = 4 * g;
+      rt_fields_old.push_back({"e_rad_"  + std::to_string(g), off + 0});
+      rt_fields_old.push_back({"fx_rad_" + std::to_string(g), off + 1});
+      rt_fields_old.push_back({"fy_rad_" + std::to_string(g), off + 2});
+      rt_fields_old.push_back({"fz_rad_" + std::to_string(g), off + 3});
+    }
+    UserData::FieldAccessor Uin_rt_old = U.getAccessor(rt_fields_old);
 
     UserData::FieldAccessor Uout_debug = U.getAccessor({{"PRISM_iter", 0}});
 
@@ -500,6 +511,7 @@ public:
     const int ions_team_size = this->ions_team_size;
     const int max_substeps = this->max_substeps;
     const double rad_residual_floor = this->rad_residual_floor;
+    const bool rt_smooth = this->rt_smooth;
 
     int ions_team_size_clamped = -1;
 
@@ -556,13 +568,27 @@ public:
           }
         }
 
-        // Get Photon Stuff
+        cs.dNpdt = {};
+        cs.dFpdt = {};
         for (int g = 0; g < N_GROUPS; ++g) {
           int index = 4 * g; // TODO: don't hardcode this
           cs.N_PHOT[g] = Uin_rt.at(iCell, index);
-          cs.N_PHOT0[g] = cs.N_PHOT[g];
           for (int d = 0; d < 3; ++d) {
             cs.F_PHOT[g][d] = Uin_rt.at(iCell, index + d + 1);
+          }
+          if (rt_smooth) {
+            // The subcycle sweeps between the pre- and post-transport values
+            const double N_old = Uin_rt_old.at(iCell, index);
+            cs.N_PHOT0[g] = fmax(N_old, cs.N_PHOT[g]);
+            cs.dNpdt[g] = (cs.N_PHOT[g] - N_old) / dt_s;
+            cs.N_PHOT[g] = N_old;
+            for (int d = 0; d < 3; ++d) {
+              const double F_old = Uin_rt_old.at(iCell, index + d + 1);
+              cs.dFpdt[g][d] = (cs.F_PHOT[g][d] - F_old) / dt_s;
+              cs.F_PHOT[g][d] = F_old;
+            }
+          } else {
+            cs.N_PHOT0[g] = cs.N_PHOT[g];
           }
         }
         cs.N_phot_new = {};
@@ -633,7 +659,8 @@ public:
           radiation_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
               ddt, elements, n_and_ion_fracs_loc, tabData, cs.nCO, cs.dx_cm,
               cs.dust_ratio, cs.N_PHOT, cs.N_phot_new, cs.phot_att, cs.sub,
-              rad_residual_floor, &cs.N_PHOT0 );
+              rad_residual_floor, &cs.N_PHOT0,
+              rt_smooth, cs.dNpdt );
         });
 
         // (2a) cooling rate pair: two threads per cell (lane 0 -> T, lane 1 ->
@@ -738,7 +765,8 @@ public:
           double total_time = total_time_pool(s);
           subcycle_commit_and_control<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
               elements, tabData, n_and_ion_fracs_loc, cs.nCO, cs.N_PHOT, cs.F_PHOT,
-              cs.N_phot_new, cs.phot_att, ddt, total_time, cs.sub );
+              cs.N_phot_new, cs.phot_att, ddt, total_time, cs.sub,
+              rt_smooth, cs.dFpdt );
           ddt_pool(s) = ddt;
           total_time_pool(s) = total_time;
 
