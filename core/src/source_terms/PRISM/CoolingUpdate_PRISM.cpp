@@ -194,6 +194,7 @@ private:
 
   int reduce_chunk_size;
   bool sort_cells_by_cost;
+  bool rt_smooth;
 
   RTZ_type rtz_solver;
 
@@ -225,6 +226,7 @@ public:
     T_blackbody        = configMap.getValue<real_t>("cooling", "T_blackbody", 1e4);
     reduce_chunk_size  = configMap.getValue<int>("cooling", "reduce_chunk_size", 16);
     sort_cells_by_cost = configMap.getValue<bool>("cooling", "sort_cells_by_cost", true);
+    rt_smooth          = configMap.getValue<bool>("cooling", "rt_smooth", false);
     include_HM12_UVB   = configMap.getValue<bool>("cooling", "include_HM12_UVB", true);
     UV_background_G0   = configMap.getValue<real_t>("cooling", "UV_background_G0", 0.0070977);
     PRISM::parseIonInputs(
@@ -326,6 +328,16 @@ public:
     UserData::FieldAccessor Uin_rt = U.getAccessor(rt_fields);
     UserData::FieldAccessor Uout_rt = U.getAccessor(rt_fields);
 
+    std::vector<UserData::FieldAccessor::FieldInfo> rt_fields_old;
+    rt_fields_old.reserve(4 * n_groups);
+    for (int g = 0; g < n_groups; ++g) {
+      const int off = 4 * g;
+      rt_fields_old.push_back({"e_rad_"  + std::to_string(g), off + 0});
+      rt_fields_old.push_back({"fx_rad_" + std::to_string(g), off + 1});
+      rt_fields_old.push_back({"fy_rad_" + std::to_string(g), off + 2});
+      rt_fields_old.push_back({"fz_rad_" + std::to_string(g), off + 3});
+    }
+    UserData::FieldAccessor Uin_rt_old = U.getAccessor(rt_fields_old);
 
     UserData::FieldAccessor Uout_debug = U.getAccessor({{"PRISM_iter", 0}});
 
@@ -349,6 +361,7 @@ public:
     // const int n_groups = this->n_groups;
     const RTZ_type& rtz_solver = this->rtz_solver;
     const bool include_HM12_UVB = this->include_HM12_UVB;
+    const bool rt_smooth = this->rt_smooth;
 
     timers.get("CoolingUpdate_PRISM").start();
 
@@ -422,11 +435,23 @@ public:
         // Get Photon Stuff
         std::array<double, N_GROUPS> N_PHOT{};
         std::array<std::array<double, 3>, N_GROUPS> F_PHOT{};
+        std::array<double, N_GROUPS> dNpdt{};
+        Array2D_RT dFpdt{};
         for (auto i = 0; i < N_GROUPS; ++i) {
           int index = 4 * i; // TODO: don't hardcode this
           N_PHOT[i] = Uin_rt.at(iCell, index);
           for (auto j = 0; j < 3; ++j) {
             F_PHOT[i][j] = Uin_rt.at(iCell, index + j + 1);
+          }
+          if (rt_smooth) {
+            const double N_old = Uin_rt_old.at(iCell, index);
+            dNpdt[i] = (N_PHOT[i] - N_old) / dt_s;
+            N_PHOT[i] = N_old;
+            for (auto j = 0; j < 3; ++j) {
+              const double F_old = Uin_rt_old.at(iCell, index + j + 1);
+              dFpdt[i][j] = (F_PHOT[i][j] - F_old) / dt_s;
+              F_PHOT[i][j] = F_old;
+            }
           }
         }
 
@@ -463,7 +488,8 @@ public:
           N_PHOT, F_PHOT,
           out_T_over_mu, out_mu,
           conv_its, max_its, total_iter_reached,
-          flags
+          flags,
+          rt_smooth, dNpdt, dFpdt
         );
 
         Uout_debug.at(iCell, 0) = total_iter_reached;
