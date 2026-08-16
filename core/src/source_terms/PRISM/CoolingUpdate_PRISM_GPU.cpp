@@ -631,7 +631,10 @@ public:
       // the vast majority of cells finish in the first iteration — and after
       // tail_pass iterations the stiff stragglers are finished in one on-device
       // kernel instead of thousands more per-pass launches.
-      constexpr int tail_pass = 125;
+
+      constexpr bool is_gpu = !std::is_same_v<Kokkos::DefaultExecutionSpace,
+                                              Kokkos::DefaultHostExecutionSpace>;
+      constexpr int tail_pass = is_gpu ? 30 : 0;
       const size_t ion_scratch = MAX_TOTAL_IONS * sizeof(CompactIonData::xion_t);
 
       uint32_t n_active = n_batch;
@@ -639,6 +642,122 @@ public:
 
       while( n_active > 0 && pass < max_substeps )
       {
+        // After tail_pass split passes (immediately on host builds), finish
+        // the remaining cells in one on-device kernel: one team per cell runs
+        // the whole remaining subcycle (team-parallel cooling + sequential-
+        // H/He / parallel-metal ions)
+        if( pass >= tail_pass )
+        {
+          auto active_tail = active;
+          auto tail_functor = KOKKOS_LAMBDA( const Kokkos::TeamPolicy<>::member_type& team )
+          {
+            const uint32_t s = active_tail(team.league_rank());
+            if( done_pool(s) ) return;
+            CompactIonData& n_and_ion_fracs_loc = ion_state(s);
+            PrismCellState& cs = cell_state(s);
+
+            // Snapshot buffer for metal_ions_step, allocated once per cell:
+            // team scratch is a bump allocator, so a per-iteration get_shmem
+            // would return nullptr from the second subcycle iteration on
+            auto* x_snap = static_cast<CompactIonData::xion_t*>(
+              team.team_scratch(0).get_shmem(ion_scratch) );
+
+            // Every lane keeps its own iteration counter so the loop condition
+            // stays team-uniform (the pool copy is bookkeeping, written by lane 0)
+            int iterations = iterations_pool(s);
+
+            while( iterations < max_substeps )
+            {
+              iterations += 1;
+              const double total_time = total_time_pool(s);
+
+              Kokkos::single( Kokkos::PerTeam(team), [&]()
+              {
+                iterations_pool(s) = iterations;
+
+                double ddt = ddt_pool(s);
+                subcycle_prep_iteration<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    elements, n_and_ion_fracs_loc, cs.nCO, dt_s, total_time,
+                    primary_cr_rate, ddt, cs.sub );
+                ddt_pool(s) = ddt; // prep may clamp ddt to the remaining time
+
+                radiation_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    ddt, elements, n_and_ion_fracs_loc, tabData, cs.nCO, cs.dx_cm,
+                    cs.dust_ratio, cs.N_PHOT, cs.N_phot_new, cs.phot_att, cs.sub,
+                    rad_residual_floor, &cs.N_PHOT0,
+                    rt_smooth, cs.dNpdt );
+              });
+              team.team_barrier();
+
+              const double ddt = ddt_pool(s);
+
+              cooling_step_team<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                  team, cs.cool_rate_pair, ddt, aexp, elements, n_and_ion_fracs_loc, tabData, flags,
+                  cs.loc_rho, cs.nCO, cs.dust_ratio, primary_cr_rate, cs.ss_factor,
+                  UV_G0, cs.N_phot_new, cs.sub );
+              team.team_barrier();
+
+              Kokkos::single( Kokkos::PerTeam(team), [&]()
+              {
+                molecular_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    ddt, elements, n_and_ion_fracs_loc, tabData, cs.nCO,
+                    cs.dust_ratio, UV_G0, cs.N_phot_new, cs.sub );
+              });
+              team.team_barrier();
+
+              HandHe_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                  team, ddt, elements, n_and_ion_fracs_loc, tabData, flags,
+                  cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
+                  cs.N_phot_new, cs.sub );
+              metal_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                  team, ddt, elements, n_and_ion_fracs_loc, tabData, flags,
+                  cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
+                  cs.N_phot_new, ion_map, n_ion_work, x_snap, cs.sub );
+              team.team_barrier();
+
+              Kokkos::single( Kokkos::PerTeam(team), [&]()
+              {
+                double ddt_loc = ddt;
+                double total_time_loc = total_time;
+                subcycle_commit_and_control<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    elements, tabData, n_and_ion_fracs_loc, cs.nCO, cs.N_PHOT, cs.F_PHOT,
+                    cs.N_phot_new, cs.phot_att, ddt_loc, total_time_loc, cs.sub,
+                    rt_smooth, cs.dFpdt );
+                ddt_pool(s) = ddt_loc;
+                total_time_pool(s) = total_time_loc;
+              });
+              team.team_barrier();
+
+              if( fabs(total_time_pool(s) - dt_s)/dt_s < 1e-6 )
+                break;
+            }
+
+            Kokkos::single( Kokkos::PerTeam(team), [&]() { done_pool(s) = 1; });
+          };
+
+          // ions_team_size (network stages rounded to warps) on device, unless
+          // the functor's resource use forces a smaller block; a single thread
+          // per cell on host, where the fused kernel IS the monolithic loop
+          // (barriers and singles collapse to straight serial execution)
+          const int team_size = is_gpu
+            ? std::min( ions_team_size,
+                Kokkos::TeamPolicy<>(n_active, Kokkos::AUTO)
+                  .set_scratch_size(0, Kokkos::PerTeam(ion_scratch))
+                  .team_size_max(tail_functor, Kokkos::ParallelForTag()) )
+            : 1;
+
+          // Cost-sorted cells put the expensive stragglers first, so the host
+          // league needs dynamic scheduling (a blocked static partition would
+          // hand one thread all of them); CUDA hardware-schedules blocks and
+          // ignores the tag
+          Kokkos::parallel_for( "PRISM_tail",
+            Kokkos::TeamPolicy<Kokkos::Schedule<Kokkos::Dynamic>>(n_active, team_size)
+              .set_scratch_size(0, Kokkos::PerTeam(ion_scratch)),
+            tail_functor );
+
+          break;
+        }
+
         // (1) prep + radiation: one thread per cell
         Kokkos::parallel_for( "PRISM_prep_rad", Kokkos::RangePolicy<>(0, n_active),
           KOKKOS_LAMBDA( uint32_t idx )
@@ -681,7 +800,9 @@ public:
         });
 
         // (2b) cooling Newton step from the pair: one thread per cell
-        Kokkos::parallel_for( "PRISM_cooling_update", Kokkos::RangePolicy<>(0, n_active),
+        // (3) molecules: one thread per cell
+        // (4a) H/He ions: one thread per cell. Hydrogen and helium updated sequentially
+        Kokkos::parallel_for( "PRISM_molecules_HandHe", Kokkos::RangePolicy<>(0, n_active),
           KOKKOS_LAMBDA( uint32_t idx )
         {
           const uint32_t s = active(idx);
@@ -690,31 +811,10 @@ public:
 
           cooling_update<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
               cs.cool_rate_pair, ddt_pool(s), cs.loc_rho, cs.sub );
-        });
-
-        // (3) molecules: one thread per cell
-        Kokkos::parallel_for( "PRISM_molecules", Kokkos::RangePolicy<>(0, n_active),
-          KOKKOS_LAMBDA( uint32_t idx )
-        {
-          const uint32_t s = active(idx);
-          if( done_pool(s) ) return;
-          PrismCellState& cs = cell_state(s);
 
           molecular_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
               ddt_pool(s), elements, ion_state(s), tabData, cs.nCO,
               cs.dust_ratio, UV_G0, cs.N_phot_new, cs.sub );
-        });
-
-        // (4a) H/He ions: one thread per cell. Hydrogen and helium updated
-        // sequentially (exact Gauss-Seidel) — the stiff part of the network,
-        // serial by construction, so a plain RangePolicy keeps every lane busy
-        // instead of one lane per team.
-        Kokkos::parallel_for( "PRISM_ions_HandHe", Kokkos::RangePolicy<>(0, n_active),
-          KOKKOS_LAMBDA( uint32_t idx )
-        {
-          const uint32_t s = active(idx);
-          if( done_pool(s) ) return;
-          PrismCellState& cs = cell_state(s);
 
           HandHe_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
               ddt_pool(s), elements, ion_state(s), tabData, flags,
@@ -722,8 +822,7 @@ public:
               cs.N_phot_new, cs.sub );
         });
 
-        // (4b) metal ions: one team per cell, one thread per ion stage in
-        // parallel (Jacobi) against the updated H/He.
+        // (4b) metal ions: one team per cell, one thread per ion stage in parallel
         {
           auto ions_functor = KOKKOS_LAMBDA( const Kokkos::TeamPolicy<>::member_type& team )
           {
@@ -731,10 +830,13 @@ public:
             if( done_pool(s) ) return;
             PrismCellState& cs = cell_state(s);
 
+            auto* x_snap = static_cast<CompactIonData::xion_t*>(
+              team.team_scratch(0).get_shmem(ion_scratch) );
+
             metal_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
                 team, ddt_pool(s), elements, ion_state(s), tabData, flags,
                 cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
-                cs.N_phot_new, ion_map, n_ion_work, cs.sub );
+                cs.N_phot_new, ion_map, n_ion_work, x_snap, cs.sub );
           };
 
           // ions_team_size (network stages rounded to warps) unless the
@@ -780,7 +882,7 @@ public:
         // Compact the active list after the 1st and 10th passes only (the
         // parallel_scan's returned count is the only host sync per pass; the
         // vast majority of cells finish in the first iteration)
-        if( pass == 1 || pass == 10 )
+        if( pass == 1 || pass == 3 || pass == 10 || pass == 30 )
         {
           uint32_t n_alive = 0;
           Kokkos::parallel_scan( "PRISM_compact", Kokkos::RangePolicy<>(0, n_active),
