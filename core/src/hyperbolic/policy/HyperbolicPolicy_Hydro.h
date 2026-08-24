@@ -478,15 +478,11 @@ public:
     real_t smallp = this->smallp;
     PrimState q = this->consToPrim(u);
     if (q.rho < 0.0) {
-      this->negative_rho_count()++; 
-      // This inaccurate because of concurrency but it's always > 1 when there is an error 
-      // Use atomic_inc if you need accurate results
-      //Kokkos::atomic_inc( &this->negative_rho_count() );
+      Kokkos::atomic_inc( &this->negative_rho_count() );
       q.rho = smallr;
     }
     if (q.p < 0.0) {
-      this->negative_p_count() ++;
-      //Kokkos::atomic_inc( &this->negative_p_count() );
+      Kokkos::atomic_inc( &this->negative_p_count() );
       q.p   = smallp;
     }
     ConsState u_pp = this->primToCons(q);
@@ -503,9 +499,11 @@ public:
       KOKKOS_LAMBDA( int )
     {
       if( negative_rho_count() > 0 )
-        Kokkos::printf( "Negative density detected\n");
-      // if( negative_p_count() > 0 )
-      //   Kokkos::printf( "Negative pressure detected\n" );
+        Kokkos::printf( "Negative density detected in %d cells\n", negative_rho_count());
+      if( negative_p_count() > 0 )
+        Kokkos::printf( "Negative pressure detected in %d cells\n", negative_p_count());
+      negative_rho_count() = 0;
+      negative_p_count() = 0;
     });
   }
 };
