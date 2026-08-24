@@ -67,8 +67,19 @@ public:
     cosmology       ( configMap.getValue<bool>("cosmology", "active", false) ),
     star_family     ( configMap.getValue<std::string>("star_feedback", "star_family", "stars") ),
     n_passive_scalars( configMap.getValue<int>("passive_scalars", "n_passive_scalars",
-        configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", {}).size()) )
+        configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", {}).size()) ),
+    feedback_radius ( configMap.getValue<int>("star_feedback", "feedback_radius", 0) )
   {
+    // The injection stencil can't be larger than the AMR block size
+    const Kokkos::Array<uint32_t, 3> block_size = foreach_cell.blockSize();
+    uint32_t block_size_min = std::min( block_size[IX], block_size[IY] );
+    if( foreach_cell.getDim() == 3 )
+      block_size_min = std::min( block_size_min, block_size[IZ] );
+
+    DYABLO_ASSERT_HOST_RELEASE( feedback_radius >= 0
+                             && (uint32_t)feedback_radius <= block_size_min,
+      "star_feedback/feedback_radius (" << feedback_radius << ") must be between 0 and "
+      "the AMR block size (" << block_size_min << ")" );
   }
 
   ~ParticleUpdate_feedback() {}
@@ -82,7 +93,7 @@ public:
     const real_t t_phys_yr = (t * Units::code_units().getUnit<Units::Time>()).convert_to(Units::yr());
 
     enum VarIndex {
-      IRho, IE_tot, IRho_vx, IRho_vy, IRho_vz, IRho_Z, IRho_added,
+      IRho, IE_tot, IE_int, IRho_vx, IRho_vy, IRho_vz, IRho_Z, IRho_added,
     };
     enum VarIndex_particle {
       IMASS, IBIRTHMASS, IVX, IVY, IVZ, IBIRTH, IMETAL
@@ -100,8 +111,13 @@ public:
     // into each cell by the supernovae of this step.
     U.new_fields( {"feedback_rho_added"} );
 
+    // See if dual energy is enabled
+    const bool has_e_int = U.has_field( "e_int" );
+
     std::vector<UserData::FieldAccessor_FieldInfo>
       Uin_infos = {{"rho", IRho},    {"e_tot", IE_tot},    {"rho_vx", IRho_vx},    {"rho_vy", IRho_vy},    {"rho_vz", IRho_vz},    {"feedback_rho_added", IRho_added}};
+    if( has_e_int )
+      Uin_infos.push_back( {"e_int", IE_int} );
     std::vector<UserData::ParticleAccessor_AttributeInfo>
       pinfos = {{"mass", IMASS}, {"birth_mass", IBIRTHMASS}, {"vx", IVX}, {"vy", IVY}, {"vz", IVZ}, {"birth_time", IBIRTH}, {"metallicity", IMETAL}};
 
@@ -134,6 +150,10 @@ public:
 
     Kokkos::View<int> N_supernovae_view("N_supernovae");
     Kokkos::deep_copy(N_supernovae_view, 0);
+
+    const int ndim = foreach_cell.getDim();
+    const int R    = feedback_radius;
+    const int R_k  = (ndim == 3) ? R : 0;
 
     // For MPI, we don't want to have the same seed. TODO: Generate a unique seed based on rank and/or clock time?
 
@@ -193,25 +213,87 @@ public:
 
         ForeachCell::CellIndex iCell = cells.getCellFromPos( part_pos );
 
-        pos_t cell_size = cells.getCellSize( iCell );
-        real_t cell_volume = cell_size[IX] * cell_size[IY] * cell_size[IZ];
+        ForeachCell::SearchMode_neighbor search_neighbor(
+          cells.getLightOctree(), ForeachCell::SearchMode_neighbor::CLOSEST );
 
-        real_t rho_loss = Mloss / cell_volume;
+        // Walk the injection sphere : every cell whose offset from the star's own
+        // cell is within `R` cells. `apply(cell, w)` is called once per stencil slot
+        // with the fraction `w` of a slot the cell covers. A neighbor coarser than
+        // the star's cell is reached by several slots (weight 1 each), a refined one
+        // splits its slot between its 2^ndim subcells : the deposit below is thus
+        // uniform in density whatever the refinement inside the sphere.
+        auto foreach_target_cell = [&]( auto&& apply )
+        {
+          for( int dk = -R_k ; dk <= R_k ; dk++ )
+          for( int dj = -R   ; dj <= R   ; dj++ )
+          for( int di = -R   ; di <= R   ; di++ )
+          {
+            if( di*di + dj*dj + dk*dk > R*R ) continue;
 
-        real_t ethermal = E_SNII * num / cell_volume;
-        real_t ekin = 0.5 * rho_loss * (
-          SQR(part_vel[IX]) + SQR(part_vel[IY]) + SQR(part_vel[IZ])
-        );
+            ForeachCell::CellIndex iCell_n = iCell.getNeighbor(
+              { (int16_t)di, (int16_t)dj, (int16_t)dk }, search_neighbor );
 
-        // Atomic are mandatory since multiple particles can explode in the same cell
-        Kokkos::atomic_add(&Uin.at(iCell, IRho), rho_loss);
-        // Track the mass added to this cell so the passive scalars can be
-        // rescaled consistently once all deposits are summed (see cell pass below)
-        Kokkos::atomic_add(&Uin.at(iCell, IRho_added), rho_loss);
-        Kokkos::atomic_add(&Uin.at(iCell, IE_tot), ethermal + ekin);
-        Kokkos::atomic_add(&Uin.at(iCell, IRho_vx), rho_loss * part_vel[IX]);
-        Kokkos::atomic_add(&Uin.at(iCell, IRho_vy), rho_loss * part_vel[IY]);
-        Kokkos::atomic_add(&Uin.at(iCell, IRho_vz), rho_loss * part_vel[IZ]);
+            // Outside the domain, or owned by another MPI rank (writing there would
+            // land in a ghost block that is never sent back) : the slot is dropped
+            // and its share picked up by the rest of the sphere.
+            if( !iCell_n.is_valid() || iCell_n.iOct.isGhost ) continue;
+
+            if( iCell_n.level_diff() >= 0 )
+            {
+              apply( iCell_n, (real_t)1 );
+            }
+            else
+            { // Neighbor is refined : the slot is covered by its 2^ndim subcells
+              const int sub_k_count = (ndim == 3) ? 2 : 1;
+              const real_t w = 1.0 / ( 2 * 2 * sub_k_count );
+              for( int16_t sk = 0 ; sk < sub_k_count ; sk++ )
+              for( int16_t sj = 0 ; sj < 2           ; sj++ )
+              for( int16_t si = 0 ; si < 2           ; si++ )
+              {
+                ForeachCell::CellIndex iCell_s = iCell_n.getNeighbor( {si,sj,sk}, search_neighbor );
+                if( !iCell_s.is_valid() || iCell_s.iOct.isGhost ) continue;
+                apply( iCell_s, w );
+              }
+            }
+          }
+        };
+
+        // First pass : how much of the sphere is actually reachable. Normalizing by
+        // this rather than by its nominal size is what keeps the injected mass and
+        // energy equal to Mloss and num*E_SNII when part of the sphere was dropped.
+        real_t weight_tot = 0;
+        foreach_target_cell( [&]( const ForeachCell::CellIndex&, real_t w ) { weight_tot += w; } );
+        if( weight_tot <= 0 ) return;
+
+        const real_t Mloss_per_weight = Mloss / weight_tot;
+        const real_t E_per_weight     = E_SNII * num / weight_tot;
+
+        // Second pass : deposit. Each target is divided by its own volume, so the
+        // deposit stays conservative across a refinement jump.
+        foreach_target_cell( [&]( const ForeachCell::CellIndex& iCell_n, real_t w )
+        {
+          pos_t cell_size = cells.getCellSize( iCell_n );
+          real_t inv_cell_volume = w / ( cell_size[IX] * cell_size[IY] * cell_size[IZ] );
+
+          real_t rho_loss = Mloss_per_weight * inv_cell_volume;
+
+          real_t ethermal = E_per_weight * inv_cell_volume;
+          real_t ekin = 0.5 * rho_loss * (
+            SQR(part_vel[IX]) + SQR(part_vel[IY]) + SQR(part_vel[IZ])
+          );
+
+          // Atomic are mandatory since multiple particles can explode in the same cell
+          Kokkos::atomic_add(&Uin.at(iCell_n, IRho), rho_loss);
+          // Track the mass added to this cell so the passive scalars can be
+          // rescaled consistently once all deposits are summed (see cell pass below)
+          Kokkos::atomic_add(&Uin.at(iCell_n, IRho_added), rho_loss);
+          Kokkos::atomic_add(&Uin.at(iCell_n, IE_tot), ethermal + ekin);
+          if (has_e_int)
+            Kokkos::atomic_add(&Uin.at(iCell_n, IE_int), ethermal);
+          Kokkos::atomic_add(&Uin.at(iCell_n, IRho_vx), rho_loss * part_vel[IX]);
+          Kokkos::atomic_add(&Uin.at(iCell_n, IRho_vy), rho_loss * part_vel[IY]);
+          Kokkos::atomic_add(&Uin.at(iCell_n, IRho_vz), rho_loss * part_vel[IZ]);
+        });
 
         // Update particle properties
         Pdata.at(iPart, IMASS) -= Mloss;
@@ -261,6 +343,8 @@ private:
 
   std::string star_family;
   int n_passive_scalars;
+
+  int feedback_radius;
 };
 
 } // namespace dyablo
