@@ -419,7 +419,7 @@ public:
         // Initialize CompactIonData from field data
         const Element* elements = rtz_solver.elements_d.data();
         n_and_ion_fracs_loc = CompactIonData{};
-        n_and_ion_fracs_loc.init_offsets(elements);
+        n_and_ion_fracs_loc.init_offsets(elements, ions2passive.data());
 
         for (int i = 1; i < MAX_ELEMENTS; ++i) {
           if (ions2passive[i] == -1) continue; // Skip elements not in network

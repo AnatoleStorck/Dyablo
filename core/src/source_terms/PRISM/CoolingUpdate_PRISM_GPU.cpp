@@ -220,16 +220,12 @@ private:
   real_t UV_background_G0;
 
   bool sort_cells_by_cost;
+  int tail_pass_cfg;
+  bool verbose;
   int max_substeps;
   int batch_size;
   real_t rad_residual_floor;
   bool rt_smooth;
-
-  // Flattened (element << 8 | stage) work items for the team-parallel Jacobi
-  // metal-ion update: one entry per true ion stage of the configured network
-  Kokkos::View<uint16_t*> ion_map_d;
-  int n_ion_work = 0;
-  int ions_team_size = 0;
 
   // Solver-state pools for the split-kernel driver, cached across update() calls
   Kokkos::View<PrismCellState*> cell_state_pool;
@@ -238,6 +234,21 @@ private:
   Kokkos::View<int*> iterations_pool;
   Kokkos::View<uint8_t*> done_pool;
   Kokkos::View<uint32_t*> active_list_pool, active_list_next_pool;
+
+  // Straggler pools. Cells that survive handoff_pass split passes are copied
+  // out of their batch's pools into these, so the long sparse tail of the
+  // subcycle is run ONCE over the survivors of every batch instead of being
+  // re-run per batch. Only a few percent of cells get this far, so these are
+  // small next to the per-batch pools.
+  Kokkos::View<PrismCellState*> str_cell_state;
+  Kokkos::View<CompactIonData*> str_ion_state;
+  Kokkos::View<double*> str_ddt, str_total_time;
+  Kokkos::View<int*> str_iterations;
+  Kokkos::View<uint8_t*> str_done;
+  Kokkos::View<uint32_t*> str_active, str_active_next;
+  Kokkos::View<ForeachCell::CellIndex*> str_cells;
+  uint32_t str_capacity = 0;
+  int handoff_pass_cfg;
 
   RTZ_type rtz_solver;
 
@@ -270,6 +281,24 @@ public:
     // Cells that took many iterations last step are scheduled first, so
     // expensive cells share batches instead of straggling behind cheap ones
     sort_cells_by_cost = configMap.getValue<bool>("cooling", "sort_cells_by_cost", true);
+    // Number of split passes before the remaining stragglers are handed to the
+    // fused on-device tail kernel. The dense split path has the better
+    // throughput while most cells are still active; the tail is far better once
+    // the survivors are few, since it keeps per-cell state in registers across
+    // all remaining iterations instead of round-tripping it through global
+    // memory five times per iteration.
+    // Default: never cut over on GPU. With the doubling compaction schedule the
+    // dense split path keeps shrinking its grid, so the launch overhead the
+    // fused tail existed to avoid has gone; measured on the G8 testbed the tail
+    // is a net loss at every cutover tried, in both the single-batch and the
+    // multi-batch regime. Lower this to re-enable it. Host builds ignore the
+    // value and always take the fused path, where it IS the monolithic loop.
+    tail_pass_cfg      = configMap.getValue<int>("cooling", "tail_pass", 1000000000);
+    verbose            = configMap.getValue<bool>("cooling", "verbose", false);
+    // Split passes run per batch before the survivors are consolidated into the
+    // straggler pools. Small values move more cells (and more copying) into the
+    // shared pool; large values make each batch re-run more of the sparse tail.
+    handoff_pass_cfg   = configMap.getValue<int>("cooling", "handoff_pass", 2);
     // Safety cap on the number of subcycle iterations per cell
     max_substeps       = configMap.getValue<int>("cooling", "max_substeps", 100000);
     // Cells are processed in batches of at most this many, sized to bound the
@@ -285,6 +314,24 @@ public:
       this->nions_and_molecules, this->elems2passive, this->ions2passive, this->elem2atomicnum, this->ion_counts, this->molecule_counts,
       include_H2
     );
+    // CompactIonData's flat arrays are bounded at compile time by MAX_TOTAL_IONS,
+    // so a network larger than the build was configured for would silently write
+    // past them. Check it here, where the network is known.
+    {
+      // Must mirror init_offsets, which reserves elements[i].n_ions + n_mol
+      // slots per active element -- the element's FULL ionization ladder
+      // (n_ions = atomic number + 1, as in initialize_elements), not however
+      // many stages the .ini happens to list.
+      int total_slots = 0;
+      for (int i = 1; i < MAX_ELEMENTS; ++i) {
+        if (ions2passive[i] == -1) continue;
+        total_slots += (i + 1) + ((i == 1 && include_H2) ? 1 : 0);
+      }
+      DYABLO_ASSERT_HOST_RELEASE( total_slots <= MAX_TOTAL_IONS,
+        "The configured ion network needs " << total_slots << " ion/molecule slots but this build "
+        "of PRISM was compiled with MAX_TOTAL_IONS=" << MAX_TOTAL_IONS
+        << ". Reconfigure with -DDYABLO_PRISM_MAX_TOTAL_IONS=" << total_slots << " (or larger)." );
+    }
     PRISM_GPU::parsePhotonGroupInputs(n_groups, rt_groups_lower, rt_groups_upper, this->E_min, this->E_max);
     rtz_solver.set_reduced_speed_of_light_factor(c_tilde);
     rtz_solver.set_UV_background_G0(UV_background_G0);
@@ -295,27 +342,6 @@ public:
       E_max_tmp[i] = this->E_max[i];
     }
     rtz_solver.set_photon_groups(E_min_tmp, E_max_tmp);
-
-    // Work items for the team-parallel metal-ion update (metal_ions_step): every
-    // true ion stage (n_ions = atomic number + 1, as in initialize_elements) of
-    // every metal (Z >= 3) in the network. H and He are updated separately by
-    // HandHe_ions_step; molecule slots (H2) are handled by molecular_step.
-    {
-      std::vector<uint16_t> ion_map_host;
-      for (int i = 3; i < MAX_ELEMENTS; ++i) {
-        if (ions2passive[i] == -1) continue;
-        for (int j = 0; j <= i; ++j)
-          ion_map_host.push_back( static_cast<uint16_t>((i << 8) | j) );
-      }
-      n_ion_work = ion_map_host.size();
-      // One thread per ion stage, rounded up to full warps, at most 4 warps
-      ions_team_size = std::min( ((n_ion_work + 31)/32)*32, 128 );
-      ion_map_d = Kokkos::View<uint16_t*>("PRISM_ion_map", n_ion_work);
-      auto ion_map_h = Kokkos::create_mirror_view(ion_map_d);
-      for (int t = 0; t < n_ion_work; ++t)
-        ion_map_h(t) = ion_map_host[t];
-      Kokkos::deep_copy(ion_map_d, ion_map_h);
-    }
 
     timers.get("CoolingUpdate_PRISM:cross_section").start();
     rtz_solver.need_to_update_cross_sections(T_blackbody);
@@ -506,14 +532,354 @@ public:
     auto active          = this->active_list_pool;
     auto active_next     = this->active_list_next_pool;
 
-    const uint16_t* ion_map = ion_map_d.data();
-    const int n_ion_work = this->n_ion_work;
-    const int ions_team_size = this->ions_team_size;
     const int max_substeps = this->max_substeps;
     const double rad_residual_floor = this->rad_residual_floor;
     const bool rt_smooth = this->rt_smooth;
 
-    int ions_team_size_clamped = -1;
+
+    constexpr bool is_gpu = !std::is_same_v<Kokkos::DefaultExecutionSpace,
+                                            Kokkos::DefaultHostExecutionSpace>;
+    const int tail_pass = is_gpu ? this->tail_pass_cfg : 0;
+
+    // ---- Straggler pools: sized on demand, grown geometrically ----
+    // Only cells that survive handoff_passes split passes land here, which on
+    // the G8 testbed is a couple of percent of the grid.
+    const int handoff_passes = is_gpu ? this->handoff_pass_cfg : max_substeps;
+    Kokkos::View<uint32_t> str_count_d("PRISM_str_count");
+    uint32_t str_count = 0;
+    auto ensure_str_capacity = [&]( uint32_t need ) -> void
+    {
+      if( str_capacity >= need ) return;
+      uint32_t cap = std::max<uint32_t>( need, std::max<uint32_t>( 2*str_capacity, 65536u ) );
+      Kokkos::resize( str_cell_state, cap );
+      Kokkos::resize( str_ion_state, cap );
+      Kokkos::resize( str_ddt, cap );
+      Kokkos::resize( str_total_time, cap );
+      Kokkos::resize( str_iterations, cap );
+      Kokkos::resize( str_done, cap );
+      Kokkos::resize( str_active, cap );
+      Kokkos::resize( str_active_next, cap );
+      Kokkos::resize( str_cells, cap );
+      str_capacity = cap;
+    };
+
+    // ---- The split subcycle, driven over an arbitrary pool set ----
+    // Runs at most `max_passes` passes over `n_active` cells and returns how
+    // many are still unfinished. Used twice: once per batch (bounded by
+    // handoff_pass) and once over the consolidated stragglers.
+    auto run_subcycle = [&](
+        Kokkos::View<PrismCellState*> cell_state,
+        Kokkos::View<CompactIonData*> ion_state,
+        Kokkos::View<double*> ddt_pool,
+        Kokkos::View<double*> total_time_pool,
+        Kokkos::View<int*> iterations_pool,
+        Kokkos::View<uint8_t*> done_pool,
+        Kokkos::View<uint32_t*>& active,
+        Kokkos::View<uint32_t*>& active_next,
+        uint32_t n_active,
+        int max_passes ) -> uint32_t
+    {
+      int pass = 0;
+      int next_compact = 1;
+
+        while( n_active > 0 && pass < max_passes )
+        {
+          // After tail_pass split passes (immediately on host builds), finish the
+          // remaining cells in one on-device kernel: ONE THREAD per cell runs the
+          // whole remaining subcycle serially.
+          //
+          // This replaces a one-team-per-cell formulation. That version spent 3 of
+          // its 5 phases inside Kokkos::single (1 of 32 lanes busy), used 2 lanes
+          // for cooling and 16 of 32 for the metal ions -- about 2.6 useful lanes
+          // per warp -- while its 250-register footprint capped it at 8 blocks/SM,
+          // i.e. 8 *cells* resident per SM. At one thread per cell the same
+          // register budget puts 256 cells/SM in flight: ~32x more cells for ~2.6x
+          // less per-cell parallelism. Measured at 71% of the whole PRISM solve,
+          // this kernel is where the time goes.
+          //
+          // ddt / total_time / iterations stay in registers for the whole loop and
+          // are written back once at the end; nothing else reads those pools while
+          // the tail runs.
+          if( pass >= tail_pass )
+          {
+            auto active_tail = active;
+
+            if( verbose )
+              std::cout << "[PRISM] tail entered at pass " << pass
+                        << " with " << n_active << " active cells" << std::endl;
+
+            // Cost-sorted cells put the expensive stragglers first, so the host
+            // needs dynamic scheduling (a blocked static partition would hand one
+            // thread all of them); CUDA hardware-schedules blocks and ignores it
+            Kokkos::parallel_for( "PRISM_tail",
+              Kokkos::RangePolicy<Kokkos::Schedule<Kokkos::Dynamic>>(0, n_active),
+              KOKKOS_LAMBDA( uint32_t idx )
+            {
+              const uint32_t s = active_tail(idx);
+              if( done_pool(s) ) return;
+              CompactIonData& n_and_ion_fracs_loc = ion_state(s);
+              PrismCellState& cs = cell_state(s);
+
+              int    iterations = iterations_pool(s);
+              double ddt        = ddt_pool(s);
+              double total_time = total_time_pool(s);
+
+              while( iterations < max_substeps )
+              {
+                iterations += 1;
+
+                subcycle_prep_iteration<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    elements, n_and_ion_fracs_loc, cs.nCO, dt_s, total_time,
+                    primary_cr_rate, ddt, cs.sub );
+
+                radiation_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    ddt, elements, n_and_ion_fracs_loc, tabData, cs.nCO, cs.dx_cm,
+                    cs.dust_ratio, cs.N_PHOT, cs.N_phot_new, cs.phot_att, cs.sub,
+                    rad_residual_floor, &cs.N_PHOT0,
+                    rt_smooth, cs.dNpdt );
+
+                cooling_rate_lane<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    0, cs.cool_rate_pair, aexp, elements, n_and_ion_fracs_loc, tabData, flags,
+                    cs.nCO, cs.dust_ratio, primary_cr_rate, cs.ss_factor, UV_G0,
+                    cs.N_phot_new, cs.sub );
+                cooling_rate_lane<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    1, cs.cool_rate_pair, aexp, elements, n_and_ion_fracs_loc, tabData, flags,
+                    cs.nCO, cs.dust_ratio, primary_cr_rate, cs.ss_factor, UV_G0,
+                    cs.N_phot_new, cs.sub );
+                cooling_update<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    cs.cool_rate_pair, ddt, cs.loc_rho, cs.sub );
+
+                molecular_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    ddt, elements, n_and_ion_fracs_loc, tabData, cs.nCO,
+                    cs.dust_ratio, UV_G0, cs.N_phot_new, cs.sub );
+
+                HandHe_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    ddt, elements, n_and_ion_fracs_loc, tabData, flags,
+                    cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
+                    cs.N_phot_new, cs.sub );
+                metal_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    ddt, elements, n_and_ion_fracs_loc, tabData, flags,
+                    cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
+                    cs.N_phot_new, cs.sub );
+
+                subcycle_commit_and_control<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    elements, tabData, n_and_ion_fracs_loc, cs.nCO, cs.N_PHOT, cs.F_PHOT,
+                    cs.N_phot_new, cs.phot_att, ddt, total_time, cs.sub,
+                    rt_smooth, cs.dFpdt );
+
+                if( fabs(total_time - dt_s)/dt_s < 1e-6 )
+                  break;
+              }
+
+              iterations_pool(s) = iterations;
+              ddt_pool(s)        = ddt;
+              total_time_pool(s) = total_time;
+              done_pool(s)       = 1;
+            });
+
+            break;
+          }
+
+          // (1) prep + radiation: one thread per cell
+          Kokkos::parallel_for( "PRISM_prep_rad", Kokkos::RangePolicy<>(0, n_active),
+            KOKKOS_LAMBDA( uint32_t idx )
+          {
+            const uint32_t s = active(idx);
+            if( done_pool(s) ) return;
+            CompactIonData& n_and_ion_fracs_loc = ion_state(s);
+            PrismCellState& cs = cell_state(s);
+
+            iterations_pool(s) += 1;
+
+            double ddt = ddt_pool(s);
+            subcycle_prep_iteration<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                elements, n_and_ion_fracs_loc, cs.nCO, dt_s, total_time_pool(s),
+                primary_cr_rate, ddt, cs.sub );
+            ddt_pool(s) = ddt; // prep may clamp ddt to the remaining time
+
+            radiation_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                ddt, elements, n_and_ion_fracs_loc, tabData, cs.nCO, cs.dx_cm,
+                cs.dust_ratio, cs.N_PHOT, cs.N_phot_new, cs.phot_att, cs.sub,
+                rad_residual_floor, &cs.N_PHOT0,
+                rt_smooth, cs.dNpdt );
+          });
+
+          // (2a) cooling rate pair: two threads per cell (lane 0 -> T, lane 1 ->
+          // 1.001*T). Packed flat so a 32-lane warp evaluates 16 cells with no
+          // idle lanes; a RangePolicy has no intra-warp barrier, so the Newton
+          // step that consumes the pair is the separate kernel (2b).
+          Kokkos::parallel_for( "PRISM_cooling_rates", Kokkos::RangePolicy<>(0, 2*n_active),
+            KOKKOS_LAMBDA( uint32_t t )
+          {
+            const uint32_t s = active(t/2);
+            if( done_pool(s) ) return;
+            PrismCellState& cs = cell_state(s);
+
+            cooling_rate_lane<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                t%2, cs.cool_rate_pair, aexp, elements, ion_state(s), tabData, flags,
+                cs.nCO, cs.dust_ratio, primary_cr_rate, cs.ss_factor, UV_G0,
+                cs.N_phot_new, cs.sub );
+          });
+
+          // (2b) cooling Newton step from the pair: one thread per cell
+          // (3) molecules: one thread per cell
+          // (4a) H/He ions: one thread per cell. Hydrogen and helium updated sequentially
+          Kokkos::parallel_for( "PRISM_molecules_ions_commit", Kokkos::RangePolicy<>(0, n_active),
+            KOKKOS_LAMBDA( uint32_t idx )
+          {
+            const uint32_t s = active(idx);
+            if( done_pool(s) ) return;
+            PrismCellState& cs = cell_state(s);
+
+            cooling_update<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                cs.cool_rate_pair, ddt_pool(s), cs.loc_rho, cs.sub );
+
+            molecular_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                ddt_pool(s), elements, ion_state(s), tabData, cs.nCO,
+                cs.dust_ratio, UV_G0, cs.N_phot_new, cs.sub );
+
+            HandHe_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                ddt_pool(s), elements, ion_state(s), tabData, flags,
+                cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
+                cs.N_phot_new, cs.sub );
+
+            // (4b) metal ions, serial per cell. This used to be its own
+            // TeamPolicy kernel with one 32-lane team per cell, but the network
+            // has only 16 metal stages (C 7 + O 9), so half of every warp idled
+            // while 4 team barriers and 3 team reductions were paid for 16 units
+            // of work. One thread per cell fills the warp and lets the update
+            // fuse into this kernel, removing a launch per pass.
+            metal_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                ddt_pool(s), elements, ion_state(s), tabData, flags,
+                cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
+                cs.N_phot_new, cs.sub );
+
+            // (5) commit + timestep control, fused into the same thread. Both
+            // steps are one thread per cell over the same active list and run
+            // back to back, so keeping them in one kernel saves a launch per
+            // pass -- ~2000 per step -- and one round trip of the subcycle
+            // state through global memory.
+            double ddt = ddt_pool(s);
+            double total_time = total_time_pool(s);
+            subcycle_commit_and_control<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                elements, tabData, ion_state(s), cs.nCO, cs.N_PHOT, cs.F_PHOT,
+                cs.N_phot_new, cs.phot_att, ddt, total_time, cs.sub,
+                rt_smooth, cs.dFpdt );
+            ddt_pool(s) = ddt;
+            total_time_pool(s) = total_time;
+
+            // Stop subcycling once the full hydro timestep has been integrated
+            if( fabs(total_time - dt_s)/dt_s < 1e-6 )
+              done_pool(s) = 1;
+          });
+
+          ++pass;
+
+          // Compact the active list on a doubling schedule (1, 2, 4, 8, ...).
+          // The parallel_scan's returned count is the only host sync per pass, so
+          // compacting every pass would be wasteful, but a fixed short schedule
+          // leaves the grid sized to a stale count for long stretches -- with the
+          // cutover to the fused tail configurable, the dense path can now run far
+          // past the old hardcoded 30 passes, and must keep shrinking its grid.
+          if( pass == next_compact )
+          {
+            next_compact *= 2;
+            uint32_t n_alive = 0;
+            Kokkos::parallel_scan( "PRISM_compact", Kokkos::RangePolicy<>(0, n_active),
+              KOKKOS_LAMBDA( uint32_t idx, uint32_t& count, bool final )
+            {
+              const uint32_t s = active(idx);
+              if( !done_pool(s) )
+              {
+                if( final )
+                  active_next(count) = s;
+                ++count;
+              }
+            }, n_alive );
+            std::swap( active, active_next );
+            n_active = n_alive;
+          }
+
+        } // End subcycle pass loop
+
+      return n_active;
+    };
+
+    // ---- Store: write a finished pool's solver state back to field data ----
+    // Shared by the per-batch store and the straggler store; `cells` maps a pool
+    // slot to its mesh cell. Cells with done == 2 were handed off and will be
+    // written by the straggler phase instead -- the hydro energy update below is
+    // a read-modify-write and must run exactly once per cell.
+    auto store_pool = [&](
+        Kokkos::View<ForeachCell::CellIndex*> cells,
+        Kokkos::View<PrismCellState*> cell_state,
+        Kokkos::View<CompactIonData*> ion_state,
+        Kokkos::View<int*> iterations_pool,
+        Kokkos::View<uint8_t*> done_pool,
+        uint32_t count ) -> void
+    {
+      Kokkos::parallel_for( "PRISM_store", Kokkos::RangePolicy<>(0, count),
+        KOKKOS_LAMBDA( uint32_t s )
+      {
+        if( done_pool(s) == 2 ) return; // handed off; stored by the straggler phase
+        const real_t gamma_m1 = gamma0 - 1.0;
+        const ForeachCell::CellIndex iCell = cells(s);
+        CompactIonData& n_and_ion_fracs_loc = ion_state(s);
+        PrismCellState& cs = cell_state(s);
+
+        // Epilogue of solve_chemistry_and_cooling: the committed T/µ is the
+        // result; undo the dust depletion applied by the load kernel
+        const real_t out_T_over_mu = cs.sub.Tmu_old;
+        remove_dust_depletion(elements, cs.dust_ratio, n_and_ion_fracs_loc, cs.nCO);
+
+        const int iters = iterations_pool(s);
+        Uout_debug.at(iCell, 0) = iters;
+
+        if( iters > max_iter_reached_device() )
+          Kokkos::atomic_max(&max_iter_reached_device(), iters);
+
+        // Hydro fields are untouched while the solver runs, so p_thermal and
+        // rho_physical can be recomputed exactly as in the load kernel
+        ConsState u = policy.getConsState(Uin, iCell);
+        PrimState q = policy.consToPrim(u);
+
+        real_t p_thermal = q.p;
+        if constexpr ( Policy::has_dual_energy() )
+          p_thermal = gamma_m1 * u.e_int;
+
+        auto rho_physical = Units::supercomoving_to_physical<Units::Density>(q.rho, aexp) * code_density;
+
+        // Write back element number densities and ion fractions
+        for (int i = 1; i < MAX_ELEMENTS; ++i) {
+          if (ions2passive[i] == -1) continue; // Skip elements not in network
+          Uout_passive.at(iCell, elems2passive[i]) = n_and_ion_fracs_loc.n_element[i];
+          for (int j = 0; j < nions_and_molecules[i]; ++j) {
+            int index = ions2passive[i] + j;
+            Uout_passive.at(iCell, index) = n_and_ion_fracs_loc[i].ion_fracs[j] * u.rho;
+          }
+        }
+
+        for (int g = 0; g < N_GROUPS; ++g) {
+          int index = 4 * g; // TODO: don't hardcode this
+          Uout_rt.at(iCell, index) = cs.N_PHOT[g];
+          for (int d = 0; d < 3; ++d) {
+            Uout_rt.at(iCell, index + d + 1) = cs.F_PHOT[g][d];
+          }
+        }
+
+        if (include_CO) {
+          Uout_CO.at(iCell, 0) = cs.nCO;
+        }
+
+        const real_t p_thermal_new = (out_T_over_mu * Units::Kelvin() * rho_physical / mp_over_kb).convert_to(code_pressure);
+        const real_t delta_e_int = (p_thermal_new - p_thermal) / gamma_m1;
+
+        u.e_tot += delta_e_int;
+        if constexpr ( Policy::has_dual_energy() )
+          u.e_int += delta_e_int;
+        policy.setConsState(Uin, iCell, u);
+      });
+    };
 
     for( uint32_t batch_start = 0; batch_start < nbCells; batch_start += pool_size )
     {
@@ -555,7 +921,7 @@ public:
 
         // Initialize CompactIonData from field data
         n_and_ion_fracs_loc = CompactIonData{};
-        n_and_ion_fracs_loc.init_offsets(elements);
+        n_and_ion_fracs_loc.init_offsets(elements, ions2passive.data());
 
         for (int i = 1; i < MAX_ELEMENTS; ++i) {
           if (ions2passive[i] == -1) continue; // Skip elements not in network
@@ -625,6 +991,7 @@ public:
       });
 
       // ------ Host-side subcycle loop: one pass = one subcycle iteration per active cell ------
+      uint32_t n_active = 0;
       // Each pass launches the physics steps as separate kernels over the
       // still-active cells (per-cell adaptive ddt, no host sync between
       // launches). The active list is compacted only after passes 1 and 10 —
@@ -632,338 +999,66 @@ public:
       // tail_pass iterations the stiff stragglers are finished in one on-device
       // kernel instead of thousands more per-pass launches.
 
-      constexpr bool is_gpu = !std::is_same_v<Kokkos::DefaultExecutionSpace,
-                                              Kokkos::DefaultHostExecutionSpace>;
-      constexpr int tail_pass = is_gpu ? 30 : 0;
-      const size_t ion_scratch = MAX_TOTAL_IONS * sizeof(CompactIonData::xion_t);
+      n_active = run_subcycle( cell_state, ion_state, ddt_pool, total_time_pool,
+                               iterations_pool, done_pool, active, active_next,
+                               n_batch, handoff_passes );
 
-      uint32_t n_active = n_batch;
-      int pass = 0;
-
-      while( n_active > 0 && pass < max_substeps )
+      // ------ Handoff: move this batch's survivors into the straggler pools ------
+      // Their state travels with them (the CellIndex too, so the straggler store
+      // can write back), and they are marked done_pool == 2 so this batch's store
+      // skips them -- the hydro energy update there is a read-modify-write and
+      // must happen exactly once per cell.
+      if( n_active > 0 )
       {
-        // After tail_pass split passes (immediately on host builds), finish
-        // the remaining cells in one on-device kernel: one team per cell runs
-        // the whole remaining subcycle (team-parallel cooling + sequential-
-        // H/He / parallel-metal ions)
-        if( pass >= tail_pass )
-        {
-          auto active_tail = active;
-          auto tail_functor = KOKKOS_LAMBDA( const Kokkos::TeamPolicy<>::member_type& team )
-          {
-            const uint32_t s = active_tail(team.league_rank());
-            if( done_pool(s) ) return;
-            CompactIonData& n_and_ion_fracs_loc = ion_state(s);
-            PrismCellState& cs = cell_state(s);
-
-            // Snapshot buffer for metal_ions_step, allocated once per cell:
-            // team scratch is a bump allocator, so a per-iteration get_shmem
-            // would return nullptr from the second subcycle iteration on
-            auto* x_snap = static_cast<CompactIonData::xion_t*>(
-              team.team_scratch(0).get_shmem(ion_scratch) );
-
-            // Every lane keeps its own iteration counter so the loop condition
-            // stays team-uniform (the pool copy is bookkeeping, written by lane 0)
-            int iterations = iterations_pool(s);
-
-            while( iterations < max_substeps )
-            {
-              iterations += 1;
-              const double total_time = total_time_pool(s);
-
-              Kokkos::single( Kokkos::PerTeam(team), [&]()
-              {
-                iterations_pool(s) = iterations;
-
-                double ddt = ddt_pool(s);
-                subcycle_prep_iteration<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-                    elements, n_and_ion_fracs_loc, cs.nCO, dt_s, total_time,
-                    primary_cr_rate, ddt, cs.sub );
-                ddt_pool(s) = ddt; // prep may clamp ddt to the remaining time
-
-                radiation_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-                    ddt, elements, n_and_ion_fracs_loc, tabData, cs.nCO, cs.dx_cm,
-                    cs.dust_ratio, cs.N_PHOT, cs.N_phot_new, cs.phot_att, cs.sub,
-                    rad_residual_floor, &cs.N_PHOT0,
-                    rt_smooth, cs.dNpdt );
-              });
-              team.team_barrier();
-
-              const double ddt = ddt_pool(s);
-
-              cooling_step_team<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-                  team, cs.cool_rate_pair, ddt, aexp, elements, n_and_ion_fracs_loc, tabData, flags,
-                  cs.loc_rho, cs.nCO, cs.dust_ratio, primary_cr_rate, cs.ss_factor,
-                  UV_G0, cs.N_phot_new, cs.sub );
-              team.team_barrier();
-
-              Kokkos::single( Kokkos::PerTeam(team), [&]()
-              {
-                molecular_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-                    ddt, elements, n_and_ion_fracs_loc, tabData, cs.nCO,
-                    cs.dust_ratio, UV_G0, cs.N_phot_new, cs.sub );
-              });
-              team.team_barrier();
-
-              HandHe_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-                  team, ddt, elements, n_and_ion_fracs_loc, tabData, flags,
-                  cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
-                  cs.N_phot_new, cs.sub );
-              metal_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-                  team, ddt, elements, n_and_ion_fracs_loc, tabData, flags,
-                  cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
-                  cs.N_phot_new, ion_map, n_ion_work, x_snap, cs.sub );
-              team.team_barrier();
-
-              Kokkos::single( Kokkos::PerTeam(team), [&]()
-              {
-                double ddt_loc = ddt;
-                double total_time_loc = total_time;
-                subcycle_commit_and_control<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-                    elements, tabData, n_and_ion_fracs_loc, cs.nCO, cs.N_PHOT, cs.F_PHOT,
-                    cs.N_phot_new, cs.phot_att, ddt_loc, total_time_loc, cs.sub,
-                    rt_smooth, cs.dFpdt );
-                ddt_pool(s) = ddt_loc;
-                total_time_pool(s) = total_time_loc;
-              });
-              team.team_barrier();
-
-              if( fabs(total_time_pool(s) - dt_s)/dt_s < 1e-6 )
-                break;
-            }
-
-            Kokkos::single( Kokkos::PerTeam(team), [&]() { done_pool(s) = 1; });
-          };
-
-          // ions_team_size (network stages rounded to warps) on device, unless
-          // the functor's resource use forces a smaller block; a single thread
-          // per cell on host, where the fused kernel IS the monolithic loop
-          // (barriers and singles collapse to straight serial execution)
-          const int team_size = is_gpu
-            ? std::min( ions_team_size,
-                Kokkos::TeamPolicy<>(n_active, Kokkos::AUTO)
-                  .set_scratch_size(0, Kokkos::PerTeam(ion_scratch))
-                  .team_size_max(tail_functor, Kokkos::ParallelForTag()) )
-            : 1;
-
-          // Cost-sorted cells put the expensive stragglers first, so the host
-          // league needs dynamic scheduling (a blocked static partition would
-          // hand one thread all of them); CUDA hardware-schedules blocks and
-          // ignores the tag
-          Kokkos::parallel_for( "PRISM_tail",
-            Kokkos::TeamPolicy<Kokkos::Schedule<Kokkos::Dynamic>>(n_active, team_size)
-              .set_scratch_size(0, Kokkos::PerTeam(ion_scratch)),
-            tail_functor );
-
-          break;
-        }
-
-        // (1) prep + radiation: one thread per cell
-        Kokkos::parallel_for( "PRISM_prep_rad", Kokkos::RangePolicy<>(0, n_active),
+        ensure_str_capacity( str_count + n_active );
+        auto str_cs = str_cell_state; auto str_ion = str_ion_state;
+        auto str_dd = str_ddt;        auto str_tt  = str_total_time;
+        auto str_it = str_iterations; auto str_dn  = str_done;
+        auto str_ac = str_active;     auto str_cl  = str_cells;
+        const uint32_t base = str_count;
+        Kokkos::parallel_for( "PRISM_handoff", Kokkos::RangePolicy<>(0, n_active),
           KOKKOS_LAMBDA( uint32_t idx )
         {
           const uint32_t s = active(idx);
           if( done_pool(s) ) return;
-          CompactIonData& n_and_ion_fracs_loc = ion_state(s);
-          PrismCellState& cs = cell_state(s);
-
-          iterations_pool(s) += 1;
-
-          double ddt = ddt_pool(s);
-          subcycle_prep_iteration<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-              elements, n_and_ion_fracs_loc, cs.nCO, dt_s, total_time_pool(s),
-              primary_cr_rate, ddt, cs.sub );
-          ddt_pool(s) = ddt; // prep may clamp ddt to the remaining time
-
-          radiation_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-              ddt, elements, n_and_ion_fracs_loc, tabData, cs.nCO, cs.dx_cm,
-              cs.dust_ratio, cs.N_PHOT, cs.N_phot_new, cs.phot_att, cs.sub,
-              rad_residual_floor, &cs.N_PHOT0,
-              rt_smooth, cs.dNpdt );
+          const uint32_t d = base + Kokkos::atomic_fetch_add( &str_count_d(), 1u );
+          str_cs(d)  = cell_state(s);
+          str_ion(d) = ion_state(s);
+          str_dd(d)  = ddt_pool(s);
+          str_tt(d)  = total_time_pool(s);
+          str_it(d)  = iterations_pool(s);
+          str_dn(d)  = 0;
+          str_ac(d)  = d;
+          str_cl(d)  = batch_cells(s);
+          done_pool(s) = 2; // handed off: this batch's store must skip it
         });
+        uint32_t moved = 0;
+        Kokkos::deep_copy( moved, str_count_d );
+        Kokkos::deep_copy( str_count_d, 0u );
+        str_count = base + moved;
+        if( verbose )
+          std::cout << "[PRISM] batch@" << batch_start << " handed off " << moved
+                    << " stragglers (total " << str_count << ")" << std::endl;
+      }
 
-        // (2a) cooling rate pair: two threads per cell (lane 0 -> T, lane 1 ->
-        // 1.001*T). Packed flat so a 32-lane warp evaluates 16 cells with no
-        // idle lanes; a RangePolicy has no intra-warp barrier, so the Newton
-        // step that consumes the pair is the separate kernel (2b).
-        Kokkos::parallel_for( "PRISM_cooling_rates", Kokkos::RangePolicy<>(0, 2*n_active),
-          KOKKOS_LAMBDA( uint32_t t )
-        {
-          const uint32_t s = active(t/2);
-          if( done_pool(s) ) return;
-          PrismCellState& cs = cell_state(s);
-
-          cooling_rate_lane<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-              t%2, cs.cool_rate_pair, aexp, elements, ion_state(s), tabData, flags,
-              cs.nCO, cs.dust_ratio, primary_cr_rate, cs.ss_factor, UV_G0,
-              cs.N_phot_new, cs.sub );
-        });
-
-        // (2b) cooling Newton step from the pair: one thread per cell
-        // (3) molecules: one thread per cell
-        // (4a) H/He ions: one thread per cell. Hydrogen and helium updated sequentially
-        Kokkos::parallel_for( "PRISM_molecules_HandHe", Kokkos::RangePolicy<>(0, n_active),
-          KOKKOS_LAMBDA( uint32_t idx )
-        {
-          const uint32_t s = active(idx);
-          if( done_pool(s) ) return;
-          PrismCellState& cs = cell_state(s);
-
-          cooling_update<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-              cs.cool_rate_pair, ddt_pool(s), cs.loc_rho, cs.sub );
-
-          molecular_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-              ddt_pool(s), elements, ion_state(s), tabData, cs.nCO,
-              cs.dust_ratio, UV_G0, cs.N_phot_new, cs.sub );
-
-          HandHe_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-              ddt_pool(s), elements, ion_state(s), tabData, flags,
-              cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
-              cs.N_phot_new, cs.sub );
-        });
-
-        // (4b) metal ions: one team per cell, one thread per ion stage in parallel
-        {
-          auto ions_functor = KOKKOS_LAMBDA( const Kokkos::TeamPolicy<>::member_type& team )
-          {
-            const uint32_t s = active(team.league_rank());
-            if( done_pool(s) ) return;
-            PrismCellState& cs = cell_state(s);
-
-            auto* x_snap = static_cast<CompactIonData::xion_t*>(
-              team.team_scratch(0).get_shmem(ion_scratch) );
-
-            metal_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-                team, ddt_pool(s), elements, ion_state(s), tabData, flags,
-                cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
-                cs.N_phot_new, ion_map, n_ion_work, x_snap, cs.sub );
-          };
-
-          // ions_team_size (network stages rounded to warps) unless the
-          // functor's resource use forces a smaller block; fixed across passes,
-          // so query it only once
-          if( ions_team_size_clamped < 0 )
-            ions_team_size_clamped = std::min( ions_team_size,
-              Kokkos::TeamPolicy<>(n_active, Kokkos::AUTO)
-                .set_scratch_size(0, Kokkos::PerTeam(ion_scratch))
-                .team_size_max(ions_functor, Kokkos::ParallelForTag()) );
-
-          Kokkos::parallel_for( "PRISM_ions_metals",
-            Kokkos::TeamPolicy<>(n_active, ions_team_size_clamped)
-              .set_scratch_size(0, Kokkos::PerTeam(ion_scratch)),
-            ions_functor );
-        }
-
-        // (5) commit + timestep control: one thread per cell
-        Kokkos::parallel_for( "PRISM_commit", Kokkos::RangePolicy<>(0, n_active),
-          KOKKOS_LAMBDA( uint32_t idx )
-        {
-          const uint32_t s = active(idx);
-          if( done_pool(s) ) return;
-          CompactIonData& n_and_ion_fracs_loc = ion_state(s);
-          PrismCellState& cs = cell_state(s);
-
-          double ddt = ddt_pool(s);
-          double total_time = total_time_pool(s);
-          subcycle_commit_and_control<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
-              elements, tabData, n_and_ion_fracs_loc, cs.nCO, cs.N_PHOT, cs.F_PHOT,
-              cs.N_phot_new, cs.phot_att, ddt, total_time, cs.sub,
-              rt_smooth, cs.dFpdt );
-          ddt_pool(s) = ddt;
-          total_time_pool(s) = total_time;
-
-          // Stop subcycling once the full hydro timestep has been integrated
-          if( fabs(total_time - dt_s)/dt_s < 1e-6 )
-            done_pool(s) = 1;
-        });
-
-        ++pass;
-
-        // Compact the active list after the 1st and 10th passes only (the
-        // parallel_scan's returned count is the only host sync per pass; the
-        // vast majority of cells finish in the first iteration)
-        if( pass == 1 || pass == 3 || pass == 10 || pass == 30 )
-        {
-          uint32_t n_alive = 0;
-          Kokkos::parallel_scan( "PRISM_compact", Kokkos::RangePolicy<>(0, n_active),
-            KOKKOS_LAMBDA( uint32_t idx, uint32_t& count, bool final )
-          {
-            const uint32_t s = active(idx);
-            if( !done_pool(s) )
-            {
-              if( final )
-                active_next(count) = s;
-              ++count;
-            }
-          }, n_alive );
-          std::swap( active, active_next );
-          n_active = n_alive;
-        }
-
-      } // End subcycle pass loop
-
-      // ------ Store: write the solver state back to field data ------
-      Kokkos::parallel_for( "PRISM_store", Kokkos::RangePolicy<>(0, n_batch),
-        KOKKOS_LAMBDA( uint32_t s )
-      {
-        const real_t gamma_m1 = gamma0 - 1.0;
-        const ForeachCell::CellIndex iCell = batch_cells(s);
-        CompactIonData& n_and_ion_fracs_loc = ion_state(s);
-        PrismCellState& cs = cell_state(s);
-
-        // Epilogue of solve_chemistry_and_cooling: the committed T/µ is the
-        // result; undo the dust depletion applied by the load kernel
-        const real_t out_T_over_mu = cs.sub.Tmu_old;
-        remove_dust_depletion(elements, cs.dust_ratio, n_and_ion_fracs_loc, cs.nCO);
-
-        const int iters = iterations_pool(s);
-        Uout_debug.at(iCell, 0) = iters;
-
-        if( iters > max_iter_reached_device() )
-          Kokkos::atomic_max(&max_iter_reached_device(), iters);
-
-        // Hydro fields are untouched while the solver runs, so p_thermal and
-        // rho_physical can be recomputed exactly as in the load kernel
-        ConsState u = policy.getConsState(Uin, iCell);
-        PrimState q = policy.consToPrim(u);
-
-        real_t p_thermal = q.p;
-        if constexpr ( Policy::has_dual_energy() )
-          p_thermal = gamma_m1 * u.e_int;
-
-        auto rho_physical = Units::supercomoving_to_physical<Units::Density>(q.rho, aexp) * code_density;
-
-        // Write back element number densities and ion fractions
-        for (int i = 1; i < MAX_ELEMENTS; ++i) {
-          if (ions2passive[i] == -1) continue; // Skip elements not in network
-          Uout_passive.at(iCell, elems2passive[i]) = n_and_ion_fracs_loc.n_element[i];
-          for (int j = 0; j < nions_and_molecules[i]; ++j) {
-            int index = ions2passive[i] + j;
-            Uout_passive.at(iCell, index) = n_and_ion_fracs_loc[i].ion_fracs[j] * u.rho;
-          }
-        }
-
-        for (int g = 0; g < N_GROUPS; ++g) {
-          int index = 4 * g; // TODO: don't hardcode this
-          Uout_rt.at(iCell, index) = cs.N_PHOT[g];
-          for (int d = 0; d < 3; ++d) {
-            Uout_rt.at(iCell, index + d + 1) = cs.F_PHOT[g][d];
-          }
-        }
-
-        if (include_CO) {
-          Uout_CO.at(iCell, 0) = cs.nCO;
-        }
-
-        const real_t p_thermal_new = (out_T_over_mu * Units::Kelvin() * rho_physical / mp_over_kb).convert_to(code_pressure);
-        const real_t delta_e_int = (p_thermal_new - p_thermal) / gamma_m1;
-
-        u.e_tot += delta_e_int;
-        if constexpr ( Policy::has_dual_energy() )
-          u.e_int += delta_e_int;
-        policy.setConsState(Uin, iCell, u);
-      });
+      store_pool( batch_cells, cell_state, ion_state, iterations_pool, done_pool, n_batch );
     } // End batch loop
+
+    // ------ Finish the consolidated stragglers ------
+    // Every batch's survivors now share one active list, so the long sparse tail
+    // of the subcycle -- a thousand passes over a handful of cells -- is paid
+    // once for the whole grid instead of once per batch.
+    if( str_count > 0 )
+    {
+      if( verbose )
+        std::cout << "[PRISM] finishing " << str_count << " consolidated stragglers" << std::endl;
+      Kokkos::View<uint32_t*>& sa = str_active;
+      Kokkos::View<uint32_t*>& sn = str_active_next;
+      run_subcycle( str_cell_state, str_ion_state, str_ddt, str_total_time,
+                    str_iterations, str_done, sa, sn, str_count, max_substeps );
+      store_pool( str_cells, str_cell_state, str_ion_state,
+                  str_iterations, str_done, str_count );
+    }
 
     int max_iter_reached = 0;
     Kokkos::deep_copy(max_iter_reached, max_iter_reached_device);
