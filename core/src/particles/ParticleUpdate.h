@@ -18,6 +18,10 @@ class ParticleUpdate_star_formation_turbulent;
 class ParticleUpdate_feedback;
 class ParticleUpdate_radiative_feedback;
 
+class ParticleUpdate_sink_formation;
+class ParticleUpdate_sink_accretion;
+class ParticleUpdate_sink_merging;
+
 } //namespace dyablo 
 
 #include "plugins_lib.h"
@@ -39,6 +43,10 @@ inline bool dyablo::ParticleUpdateFactory::init()
   DECLARE_REGISTERED(dyablo::ParticleUpdate_feedback);
 
   DECLARE_REGISTERED(dyablo::ParticleUpdate_radiative_feedback);
+
+  DECLARE_REGISTERED(dyablo::ParticleUpdate_sink_formation);
+  DECLARE_REGISTERED(dyablo::ParticleUpdate_sink_accretion);
+  DECLARE_REGISTERED(dyablo::ParticleUpdate_sink_merging);
 
   return true;
 }

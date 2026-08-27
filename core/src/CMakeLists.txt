@@ -49,6 +49,10 @@ set( plugins_src
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_feedback.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_radiative_feedback.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_radiative_feedback_BPASS.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/particles/SinkUtils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_sink_formation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_sink_accretion.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/particles/ParticleUpdate_sink_merging.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/parabolic/ParabolicUpdate_explicit.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_Cooling_FF.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source_terms/SourceUpdate_GLM.cpp

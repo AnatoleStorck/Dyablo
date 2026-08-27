@@ -351,6 +351,21 @@ void UserData::merge_particles_if( const std::string& id_dest, const std::string
     this->delete_ParticleArray(id_to_merge);
 }
 
+void UserData::move_ParticleArray( const std::string& dest, const std::string& src )
+{
+    auto& pdata = *this->particles.pdata;
+    DYABLO_ASSERT_HOST_RELEASE( pdata.has_ParticleArray(src), "move_ParticleArray() - source particle array does not exist : " << src );
+
+    if( dest == src ) return;
+
+    pdata.particle_containers.erase( dest );
+    auto node = pdata.particle_containers.extract( src );
+    node.key() = dest;
+    // ParticleContainer::name labels the views reallocated by distributeParticles()
+    node.mapped().name = dest;
+    pdata.particle_containers.insert( std::move(node) );
+}
+
 UserData::ParticleAccessor UserData::getParticleAccessor( const std::string& array_name, const std::vector<ParticleAccessor_AttributeInfo>& attribute_info ) const
 {
     return ParticleAccessor( *this->particles.pdata, array_name, attribute_info );

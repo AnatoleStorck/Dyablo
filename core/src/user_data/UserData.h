@@ -231,6 +231,13 @@ public:
    **/
   void merge_particles_if( const std::string& id_dest, const std::string& id_to_merge, const std::string& mask_field );
 
+  /***
+   * @brief Change name of particle array from `src` to `dest` (replaces `dest` if it exists)
+   * NOTE : order of parameters is dest, src like in Kokkos deep_copy
+   * WARNING : Invalidates all accessors containing either particle array
+   ***/
+  void move_ParticleArray( const std::string& dest, const std::string& src );
+
 private:
   struct Fields
   {
