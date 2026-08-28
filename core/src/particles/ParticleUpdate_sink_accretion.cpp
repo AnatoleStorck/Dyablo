@@ -11,10 +11,20 @@
 namespace dyablo {
 
 /**
- * @brief Sink particle accretion, RAMSES 'threshold' scheme (sink_particle.f90 accrete_sink) :
- * each step a sink removes m = c_acc * (rho - rho_sink) * V from every cell (slot)
- * of its accretion sphere of radius ir_cloud cells, at the local gas velocity and
- * specific energy; mass, momentum and the center-of-mass shift are added to the sink.
+ * @brief Sink particle accretion (RAMSES sink_particle.f90 accrete_sink). Each step a
+ * sink removes gas from its accretion sphere of radius ir_cloud cells, at the local
+ * gas velocity and specific energy; mass, momentum and the center-of-mass shift are
+ * added to the sink. [sink] accretion_scheme selects how much is taken :
+ *
+ *   'threshold' : m = c_acc * (rho - rho_sink) * V, per cell, independently of dt.
+ *   'flux'      : the sink swallows the net mass inflow through the accretion sphere,
+ *                 Mdot = -Int div(rho (v - v_sink)) dV * f_a  (Bleuler & Teyssier 2014),
+ *                 with f_a = 0.1*(log10(rho_mean) - log10(rho_sink)) + 1 a weak
+ *                 regulator holding the zone near the threshold density. Mdot*dt is
+ *                 then shared over the sphere by volume.
+ *
+ * Whichever scheme sets the request, the per-cell limiter below is the same, so gas
+ * never drops below rho_sink and a cell can never be emptied.
  *
  * Runs in the [particles] source_term hook (before ParticleUpdate_sink_merging).
  * MPI/multi-sink correctness uses a request -> limit -> settle pattern on two
@@ -49,11 +59,7 @@ public:
     params( SinkParams::from_configMap(configMap, foreach_cell) ),
     n_passive_scalars( configMap.getValue<int>("passive_scalars", "n_passive_scalars",
         configMap.getValue<std::vector<std::string>>("passive_scalars", "passive_scalars_names", {}).size()) )
-  {
-    const std::string scheme = configMap.getValue<std::string>("sink", "accretion_scheme", "threshold");
-    DYABLO_ASSERT_HOST_RELEASE( scheme == "threshold",
-      "sink/accretion_scheme '" << scheme << "' not implemented (available : threshold)" );
-  }
+  {}
 
   void update(UserData& U, ScalarSimulationData& scalar_data)
   {
@@ -76,9 +82,11 @@ public:
     const real_t aexp = scalar_data.hasValue<real_t>("aexp") ? scalar_data.get<real_t>("aexp") : 1;
     const real_t rho_sink = Units::physical_to_supercomoving<Units::Density>( params.rho_sink_physical, aexp );
     const real_t c_acc = params.c_acc;
+    const real_t dt = scalar_data.get<real_t>("dt");
     const int R = params.ir_cloud;
     const int ndim = foreach_cell.getDim();
     const int level_max = params.level_max;
+    const bool flux_scheme = ( params.accretion_scheme == SinkAccretionScheme::Flux );
 
     // Allocate the scratch fields before taking any accessor : new_fields() reallocates the
     // field array when it needs more slots, which invalidates every accessor taken before it.
@@ -94,11 +102,19 @@ public:
 
     ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
 
+    // Flux scheme : mass each sink asks for per unit of accretion-zone volume,
+    // Mdot*dt/V_acc.
+    Kokkos::View<real_t*> flux_share( "sink_flux_share", flux_scheme ? n_loc : 0 );
+
     // ---------------------------------------------------------------
     // P1 : every sink deposits its per-slot request (ghost cells included)
     if( n_loc > 0 )
     {
+      enum VarIndex_particle{ IVX, IVY, IVZ };
       auto Ppos = U.getParticleArray( params.family );
+      auto Pvel = U.getParticleAccessor( params.family,
+        { {"vx",IVX}, {"vy",IVY}, {"vz",IVZ} } );
+
       foreach_particle.foreach_particle( "sink_accretion_request", Ppos,
         KOKKOS_LAMBDA( const ForeachParticle::ParticleIndex& iPart )
       {
@@ -110,12 +126,75 @@ public:
         const pos_t cell_size = cells.getCellSize( iCell );
         const real_t Vc = cell_size[IX]*cell_size[IY]*cell_size[IZ];
 
+        if( !flux_scheme )
+        { // RAMSES 'threshold' : take a fixed fraction of the excess above rho_sink
+          foreach_sphere_slot( iCell, R, ndim, search_neighbor, /*include_ghosts*/true,
+            [&]( const ForeachCell::CellIndex& iT, real_t w, const Kokkos::Array<int,3>& )
+          {
+            const real_t excess = Uin.at( iT, ConsState::VarIndex::Irho ) - rho_sink;
+            if( excess <= 0 ) return;
+            Kokkos::atomic_add( &Uacc.at( iT, IREQ ), c_acc * excess * w * Vc );
+          });
+          return;
+        }
+
+        // RAMSES 'flux' (Bleuler & Teyssier 2014) : the sink swallows the net mass
+        // inflow through its accretion sphere,
+        //   Mdot = -Int_V div( rho (v - v_sink) ) dV  =  -Oint_S rho (v - v_sink).n dA
+        // Walk 1 accumulates the accretion-zone volume and mean density, and the
+        // surface flux. Only slot faces whose neighbouring slot is outside the
+        // sphere contribute : interior faces cancel pairwise, which is the discrete
+        // divergence theorem. RAMSES instead evaluates div() at each cloud particle
+        // and sums it over the sphere - the same integral, but the surface form
+        // needs no neighbour lookup outside the sphere, which matters here because
+        // ir_cloud may be as large as the AMR block and a second getNeighbor() hop
+        // could leave the directly-contiguous octants.
+        const real_t face_area = cell_size[IX]*cell_size[IY];
+        const real_t vsx = Pvel.at(iPart, IVX);
+        const real_t vsy = Pvel.at(iPart, IVY);
+        const real_t vsz = Pvel.at(iPart, IVZ);
+
+        real_t V_acc = 0, mass_acc = 0, flux_out = 0;
         foreach_sphere_slot( iCell, R, ndim, search_neighbor, /*include_ghosts*/true,
-          [&]( const ForeachCell::CellIndex& iT, real_t w )
+          [&]( const ForeachCell::CellIndex& iT, real_t w, const Kokkos::Array<int,3>& off )
         {
-          const real_t excess = Uin.at( iT, ConsState::VarIndex::Irho ) - rho_sink;
-          if( excess <= 0 ) return;
-          Kokkos::atomic_add( &Uacc.at( iT, IREQ ), c_acc * excess * w * Vc );
+          const real_t rho = Uin.at( iT, ConsState::VarIndex::Irho );
+          V_acc    += w * Vc;
+          mass_acc += rho * w * Vc;
+
+          // rho*(v - v_sink) of this slot, per direction
+          const real_t F[3] = {
+            Uin.at( iT, ConsState::VarIndex::Irho_vx ) - rho*vsx,
+            Uin.at( iT, ConsState::VarIndex::Irho_vy ) - rho*vsy,
+            Uin.at( iT, ConsState::VarIndex::Irho_vz ) - rho*vsz };
+
+          for( int d = 0 ; d < 3 ; d++ )
+          for( int s = -1 ; s <= 1 ; s += 2 )
+          {
+            Kokkos::Array<int,3> nb = off;
+            nb[d] += s;
+            if( sink_slot_in_sphere( nb[IX], nb[IY], nb[IZ], R ) ) continue;
+            flux_out += w * s * F[d] * face_area;
+          }
+        });
+
+        if( V_acc <= 0 ) return;
+        const real_t rho_mean = mass_acc / V_acc;
+        if( rho_mean <= 0 ) return;
+
+        // Weak regulator keeping the accretion zone near the threshold density
+        const real_t fa = 0.1 * ( log10(rho_mean) - log10(rho_sink) ) + 1.0;
+        const real_t Mdot = -flux_out * fa;
+        if( Mdot <= 0 ) return;   // net outflow : nothing to accrete this step
+
+        // Mdot*dt shared over the accretion zone by volume (RAMSES weight/volume)
+        const real_t share = Mdot * dt / V_acc;
+        flux_share(iPart) = share;
+
+        foreach_sphere_slot( iCell, R, ndim, search_neighbor, /*include_ghosts*/true,
+          [&]( const ForeachCell::CellIndex& iT, real_t w, const Kokkos::Array<int,3>& )
+        {
+          Kokkos::atomic_add( &Uacc.at( iT, IREQ ), share * w * Vc );
         });
       });
     }
@@ -171,14 +250,25 @@ public:
         // the mesh has coarsened under a sink (keep sinks refined, e.g. jeans refinement)
         coarse_count += ( cells.getCellLevel(iCell) < level_max ) ? 1 : 0;
 
+        // Same per-slot share as P1, times the factor the owner cell settled on
+        const real_t share = flux_scheme ? flux_share(iPart) : 0;
+
         real_t dM = 0, dpx = 0, dpy = 0, dpz = 0, dxw = 0, dyw = 0, dzw = 0;
         foreach_sphere_slot( iCell, R, ndim, search_neighbor, /*include_ghosts*/true,
-          [&]( const ForeachCell::CellIndex& iT, real_t w )
+          [&]( const ForeachCell::CellIndex& iT, real_t w, const Kokkos::Array<int,3>& )
         {
           const real_t rho_t = Uin.at( iT, ConsState::VarIndex::Irho );
-          const real_t excess = rho_t - rho_sink;
-          if( excess <= 0 ) return;
-          const real_t m = c_acc * excess * w * Vc * Uacc.at( iT, IFAC );
+          real_t m;
+          if( flux_scheme )
+          {
+            m = share * w * Vc * Uacc.at( iT, IFAC );
+          }
+          else
+          {
+            const real_t excess = rho_t - rho_sink;
+            if( excess <= 0 ) return;
+            m = c_acc * excess * w * Vc * Uacc.at( iT, IFAC );
+          }
           if( m <= 0 ) return;
 
           const real_t ux = Uin.at( iT, ConsState::VarIndex::Irho_vx ) / rho_t;

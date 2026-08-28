@@ -21,6 +21,13 @@ namespace dyablo {
  * MPI_Allgatherv (see GlobalSinkTable below).
  ***/
 
+/// Accretion scheme, [sink] accretion_scheme (RAMSES accretion_scheme)
+enum class SinkAccretionScheme
+{
+  Threshold,  //!< m = c_acc * (rho - rho_sink) * V per cell of the accretion sphere
+  Flux        //!< Mdot = -Int div(rho (v-v_sink)) dV * f_a  (Bleuler & Teyssier 2014)
+};
+
 /// Runtime parameters of the sink-particle model, parsed from the [sink] section.
 struct SinkParams
 {
@@ -28,6 +35,7 @@ struct SinkParams
   real_t rho_sink_physical;       //!< creation threshold and accretion floor (physical code units)
   int    ir_cloud;                //!< accretion radius in units of dx at level_max (RAMSES ir_cloud)
   real_t c_acc;                   //!< fraction of the density excess accreted per step (RAMSES c_acc)
+  SinkAccretionScheme accretion_scheme;
   real_t mass_sink_seed_physical; //!< sink seed mass; 0 => seed from the peak-cell excess
   bool   check_energies;          //!< virial gate over the accretion sphere (needs [gravity])
   real_t merge_distance_cells;    //!< merging radius in units of dx at level_max
@@ -46,6 +54,13 @@ struct SinkParams
     p.rho_sink_physical   = configMap.getValue_in_code_unit<Units::Density>("sink", "rho_sink", "1e10 proton_mass/cm**3");
     p.ir_cloud            = configMap.getValue<int>("sink", "ir_cloud", 4);
     p.c_acc               = configMap.getValue<real_t>("sink", "c_acc", 0.75);
+    {
+      const std::string scheme = configMap.getValue<std::string>("sink", "accretion_scheme", "threshold");
+      DYABLO_ASSERT_HOST_RELEASE( scheme == "threshold" || scheme == "flux",
+        "sink/accretion_scheme '" << scheme << "' not implemented (available : threshold, flux)" );
+      p.accretion_scheme = ( scheme == "flux" ) ? SinkAccretionScheme::Flux
+                                                : SinkAccretionScheme::Threshold;
+    }
     p.mass_sink_seed_physical = configMap.getValue_in_code_unit<Units::Mass>("sink", "mass_sink_seed", "0 solar_mass");
     p.check_energies      = configMap.getValue<bool>("sink", "check_energies", true);
     p.merge_distance_cells = configMap.getValue<real_t>("sink", "merge_distance_cells", 2.0);
@@ -139,17 +154,27 @@ GlobalSinkTable build_global_sink_table(
     const UserData& U, const ForeachParticle& foreach_particle,
     const MpiComm& comm, const std::string& family );
 
+/// Is the slot at this offset inside the accretion sphere of radius R cells ?
+KOKKOS_INLINE_FUNCTION
+bool sink_slot_in_sphere( int di, int dj, int dk, int R )
+{
+  return di*di + dj*dj + dk*dk <= R*R;
+}
+
 /***
  * @brief Walk the sphere of radius R cells around iCell_center, in "slot" quadrature.
  *
  * Each offset (di,dj,dk) with |offset|^2 <= R^2 is one slot of nominal volume
- * V_center = dx_c^3 (the *center cell's* volume). apply(iCell_target, w) is
- * called once per (slot x target cell) with the fraction w of a slot the target
- * covers : a same-or-coarser neighbor gets w=1 (a coarse cell covered by k slots
- * is visited k times), a refined neighbor splits its slot between its 2^ndim
- * subcells (w=1/2^ndim each). Integrals over the sphere are therefore computed
- * with V_slot = w * V_center per call, without per-cell deduplication - the same
- * role RAMSES cloud particles play, without materializing them.
+ * V_center = dx_c^3 (the *center cell's* volume). apply(iCell_target, w, offset)
+ * is called once per (slot x target cell) with the fraction w of a slot the
+ * target covers : a same-or-coarser neighbor gets w=1 (a coarse cell covered by
+ * k slots is visited k times), a refined neighbor splits its slot between its
+ * 2^ndim subcells (w=1/2^ndim each). Integrals over the sphere are therefore
+ * computed with V_slot = w * V_center per call, without per-cell deduplication -
+ * the same role RAMSES cloud particles play, without materializing them.
+ *
+ * `offset` is the slot's integer offset from the center cell; the flux accretion
+ * scheme uses it to find which slot faces lie on the sphere's surface.
  *
  * Slots outside the domain are dropped. Slots in MPI ghost octants are kept only
  * when include_ghosts=true : reading ghosts is valid after a ghost exchange, and
@@ -163,6 +188,7 @@ void foreach_sphere_slot( const ForeachCell::CellIndex& iCell_center,
                           bool include_ghosts,
                           const Apply& apply )
 {
+  using slot_offset_t = Kokkos::Array<int,3>;
   const int R_k = (ndim == 3) ? R : 0;
   for( int dk = -R_k ; dk <= R_k ; dk++ )
   for( int dj = -R   ; dj <= R   ; dj++ )
@@ -176,9 +202,11 @@ void foreach_sphere_slot( const ForeachCell::CellIndex& iCell_center,
     if( !iCell_n.is_valid() ) continue;
     if( !include_ghosts && iCell_n.iOct.isGhost ) continue;
 
+    const slot_offset_t slot_offset = { di, dj, dk };
+
     if( iCell_n.level_diff() >= 0 )
     {
-      apply( iCell_n, (real_t)1 );
+      apply( iCell_n, (real_t)1, slot_offset );
     }
     else
     { // Neighbor is refined : the slot is covered by its 2^ndim subcells
@@ -191,7 +219,7 @@ void foreach_sphere_slot( const ForeachCell::CellIndex& iCell_center,
         ForeachCell::CellIndex iCell_s = iCell_n.getNeighbor( {si,sj,sk}, search_neighbor );
         if( !iCell_s.is_valid() ) continue;
         if( !include_ghosts && iCell_s.iOct.isGhost ) continue;
-        apply( iCell_s, w );
+        apply( iCell_s, w, slot_offset );
       }
     }
   }

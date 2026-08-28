@@ -163,7 +163,7 @@ bool sink_candidate_check( const SinkFormationCtx& ctx, const CellIndex& iCell )
   const real_t Vc = cell_size[IX]*cell_size[IY]*cell_size[IZ];
   real_t M = 0, px = 0, py = 0, pz = 0, K2 = 0, therm3 = 0, W = 0, Vsum = 0;
   foreach_sphere_slot( iCell, ctx.ir_cloud, ctx.ndim, search_neighbor, /*include_ghosts*/true,
-    [&]( const CellIndex& iT, real_t w )
+    [&]( const CellIndex& iT, real_t w, const Kokkos::Array<int,3>& )
   {
     const real_t V_slot = w * Vc;
     auto qt = ctx.policy.consToPrim( ctx.policy.getConsState( ctx.Uin, iT ) );

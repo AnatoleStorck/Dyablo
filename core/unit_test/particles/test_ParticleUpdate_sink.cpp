@@ -3,6 +3,8 @@
 #include <cmath>
 
 #include "amr/AMRmesh.h"
+#include "amr/LightOctree.h"
+#include "io/IOManager.h"
 #include "particles/ForeachParticle.h"
 #include "particles/ParticleUpdate.h"
 #include "particles/SinkUtils.h"
@@ -73,10 +75,14 @@ UserData::FieldAccessor hydro_accessor( UserData& U )
                           {"rho_vx",IRho_vx}, {"rho_vy",IRho_vy}, {"rho_vz",IRho_vz} } );
 }
 
-/// Global sums of gas mass and x-momentum
-void global_gas_totals( ForeachCell& foreach_cell, const UserData::FieldAccessor& Uin,
+/// Global sums of gas mass and x-momentum.
+/// Takes UserData rather than an accessor : the accretion module calls new_fields()
+/// for its scratch fields, which reallocates the field storage and invalidates every
+/// accessor taken before it, so this must fetch a fresh one on each call.
+void global_gas_totals( ForeachCell& foreach_cell, UserData& U,
                         real_t& mass_tot, real_t& px_tot )
 {
+  auto Uin = U.getAccessor( { {"rho",IRho}, {"rho_vx",IRho_vx} } );
   ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
   real_t mass_loc = 0, px_loc = 0;
   foreach_cell.reduce_cell( "gas_totals", Uin.getShape(),
@@ -94,7 +100,7 @@ void global_gas_totals( ForeachCell& foreach_cell, const UserData::FieldAccessor
 } // anonymous namespace
 
 // ===========================================================================
-TEST(Test_ParticleUpdate_sink, move_ParticleArray)
+void run_move_ParticleArray()
 {
   SinkTestSetup s( 2 );
   UserData& U = *s.U;
@@ -148,7 +154,7 @@ TEST(Test_ParticleUpdate_sink, move_ParticleArray)
 }
 
 // ===========================================================================
-TEST(Test_ParticleUpdate_sink, GlobalSinkTable_replicated)
+void run_GlobalSinkTable_replicated()
 {
   SinkTestSetup s( 2 );
   UserData& U = *s.U;
@@ -200,7 +206,7 @@ TEST(Test_ParticleUpdate_sink, GlobalSinkTable_replicated)
 }
 
 // ===========================================================================
-TEST(Test_ParticleUpdate_sink, formation_single_peak)
+void run_formation_single_peak()
 {
   const int level = 2;                       // uniform 32^3 cells
   SinkTestSetup s( level );
@@ -239,7 +245,7 @@ TEST(Test_ParticleUpdate_sink, formation_single_peak)
   });
 
   real_t gas_mass_before = 0, gas_px_before = 0;
-  global_gas_totals( foreach_cell, Uin, gas_mass_before, gas_px_before );
+  global_gas_totals( foreach_cell, U, gas_mass_before, gas_px_before );
 
   Timers timers;
   auto formation = ParticleUpdateFactory::make_instance( "ParticleUpdate_sink_formation",
@@ -264,7 +270,7 @@ TEST(Test_ParticleUpdate_sink, formation_single_peak)
 
   // Gas + sink mass is conserved
   real_t gas_mass_after = 0, gas_px_after = 0;
-  global_gas_totals( foreach_cell, Uin, gas_mass_after, gas_px_after );
+  global_gas_totals( foreach_cell, U, gas_mass_after, gas_px_after );
   EXPECT_NEAR( gas_mass_after + table.at(0, GlobalSinkTable::MASS), gas_mass_before, 1e-12*gas_mass_before );
 
   // A second call forms nothing : the whole neighborhood is within 2*r_acc of the sink
@@ -274,7 +280,7 @@ TEST(Test_ParticleUpdate_sink, formation_single_peak)
 }
 
 // ===========================================================================
-TEST(Test_ParticleUpdate_sink, accretion_uniform)
+void run_accretion_uniform()
 {
   const int level = 2;
   SinkTestSetup s( level );
@@ -321,7 +327,7 @@ TEST(Test_ParticleUpdate_sink, accretion_uniform)
   U.distributeParticles( "sinks" );
 
   real_t gas_mass_before = 0, gas_px_before = 0;
-  global_gas_totals( foreach_cell, Uin, gas_mass_before, gas_px_before );
+  global_gas_totals( foreach_cell, U, gas_mass_before, gas_px_before );
 
   Timers timers;
   auto accretion = ParticleUpdateFactory::make_instance( "ParticleUpdate_sink_accretion",
@@ -351,7 +357,7 @@ TEST(Test_ParticleUpdate_sink, accretion_uniform)
   EXPECT_NEAR( table.at(0, GlobalSinkTable::X), sink_pos[IX], 1e-12 );
 
   real_t gas_mass_after = 0, gas_px_after = 0;
-  global_gas_totals( foreach_cell, Uin, gas_mass_after, gas_px_after );
+  global_gas_totals( foreach_cell, U, gas_mass_after, gas_px_after );
   EXPECT_NEAR( gas_mass_after + table.at(0, GlobalSinkTable::MASS),
                gas_mass_before + m0, 1e-12*gas_mass_before );
   EXPECT_NEAR( gas_px_after + table.at(0, GlobalSinkTable::MASS)*table.at(0, GlobalSinkTable::VX),
@@ -359,7 +365,144 @@ TEST(Test_ParticleUpdate_sink, accretion_uniform)
 }
 
 // ===========================================================================
-TEST(Test_ParticleUpdate_sink, merging_pair)
+/// Flux accretion of a uniform flow must be zero : whatever rho*(v-v_sink) is, it
+/// is the same on every face of the accretion sphere, so the net flux cancels.
+/// Catches sign errors and any asymmetry in the surface sum.
+void run_accretion_flux_uniform_flow_is_null()
+{
+  const int level = 2;
+  SinkTestSetup s( level, "accretion_scheme = flux\n" );
+  UserData& U = *s.U;
+  ForeachCell& foreach_cell = *s.foreach_cell;
+  ForeachParticle foreach_particle( *s.amr_mesh, *s.configMap );
+  const MpiComm comm = s.amr_mesh->getMpiComm();
+  const int rank = comm.MPI_Comm_rank();
+
+  auto Uin = hydro_accessor( U );
+
+  const real_t dx = 1.0/32;
+  const real_t gamma0 = 1.4;
+  const real_t rho0 = 4.0, P0 = 1e-4, v0 = 0.1;   // uniform gas, uniform velocity
+
+  foreach_cell.foreach_cell( "init_hydro", Uin.getShape(),
+    CELL_LAMBDA( const ForeachCell::CellIndex& iCell )
+  {
+    Uin.at(iCell, IRho) = rho0;
+    Uin.at(iCell, IRho_vx) = rho0*v0;
+    Uin.at(iCell, IRho_vy) = 0;
+    Uin.at(iCell, IRho_vz) = 0;
+    Uin.at(iCell, IE_int) = P0/(gamma0-1);
+    Uin.at(iCell, IE_tot) = P0/(gamma0-1) + 0.5*rho0*v0*v0;
+  });
+
+  const real_t m0 = 1.0;
+  create_sink_family( U, "sinks", (rank==0) ? 1u : 0u );
+  {
+    auto Ppos = U.getParticleArray( "sinks" );
+    auto Pdata = U.getParticleAccessor( "sinks", {{"mass",0},{"id",1}} );
+    foreach_particle.foreach_particle( "init_sink", Ppos,
+      PARTICLE_LAMBDA( ParticleData::ParticleIndex iPart )
+    {
+      Ppos.pos(iPart, IX) = 16.5*dx;
+      Ppos.pos(iPart, IY) = 16.5*dx;
+      Ppos.pos(iPart, IZ) = 16.5*dx;
+      Pdata.at(iPart, 0) = m0;
+      Pdata.at(iPart, 1) = 1.0;
+    });
+  }
+  U.distributeParticles( "sinks" );
+
+  Timers timers;
+  auto accretion = ParticleUpdateFactory::make_instance( "ParticleUpdate_sink_accretion",
+    *s.configMap, foreach_cell, timers );
+
+  ScalarSimulationData scalar_data;
+  scalar_data.set<real_t>( "time", 0.0 );
+  scalar_data.set<real_t>( "dt", 1e-3 );
+  accretion->update( U, scalar_data );
+
+  GlobalSinkTable table = build_global_sink_table( U, foreach_particle, comm, "sinks" );
+  ASSERT_EQ( table.n_tot, 1 );
+  EXPECT_NEAR( table.at(0, GlobalSinkTable::MASS), m0, 1e-12 );
+}
+
+/// Flux accretion of a converging flow v = -a*(x-x_sink) : the sink must gain mass,
+/// and whatever it gains must come out of the gas exactly.
+void run_accretion_flux_converging_flow()
+{
+  const int level = 2;
+  SinkTestSetup s( level, "accretion_scheme = flux\n" );
+  UserData& U = *s.U;
+  ForeachCell& foreach_cell = *s.foreach_cell;
+  ForeachParticle foreach_particle( *s.amr_mesh, *s.configMap );
+  const MpiComm comm = s.amr_mesh->getMpiComm();
+  const int rank = comm.MPI_Comm_rank();
+
+  auto Uin = hydro_accessor( U );
+  ForeachCell::CellMetaData cells = foreach_cell.getCellMetaData();
+
+  const real_t dx = 1.0/32;
+  const real_t gamma0 = 1.4;
+  const real_t rho0 = 4.0, P0 = 1e-4, a = 0.5;
+  const pos_t sink_pos = { 16.5*dx, 16.5*dx, 16.5*dx };
+
+  foreach_cell.foreach_cell( "init_hydro", Uin.getShape(),
+    CELL_LAMBDA( const ForeachCell::CellIndex& iCell )
+  {
+    const pos_t c = cells.getCellCenter( iCell );
+    const real_t u = -a*(c[IX]-sink_pos[IX]);
+    const real_t v = -a*(c[IY]-sink_pos[IY]);
+    const real_t w = -a*(c[IZ]-sink_pos[IZ]);
+    Uin.at(iCell, IRho) = rho0;
+    Uin.at(iCell, IRho_vx) = rho0*u;
+    Uin.at(iCell, IRho_vy) = rho0*v;
+    Uin.at(iCell, IRho_vz) = rho0*w;
+    Uin.at(iCell, IE_int) = P0/(gamma0-1);
+    Uin.at(iCell, IE_tot) = P0/(gamma0-1) + 0.5*rho0*(u*u+v*v+w*w);
+  });
+
+  const real_t m0 = 1.0;
+  create_sink_family( U, "sinks", (rank==0) ? 1u : 0u );
+  {
+    auto Ppos = U.getParticleArray( "sinks" );
+    auto Pdata = U.getParticleAccessor( "sinks", {{"mass",0},{"id",1}} );
+    foreach_particle.foreach_particle( "init_sink", Ppos,
+      PARTICLE_LAMBDA( ParticleData::ParticleIndex iPart )
+    {
+      Ppos.pos(iPart, IX) = sink_pos[IX];
+      Ppos.pos(iPart, IY) = sink_pos[IY];
+      Ppos.pos(iPart, IZ) = sink_pos[IZ];
+      Pdata.at(iPart, 0) = m0;
+      Pdata.at(iPart, 1) = 1.0;
+    });
+  }
+  U.distributeParticles( "sinks" );
+
+  real_t gas_mass_before = 0, gas_px_before = 0;
+  global_gas_totals( foreach_cell, U, gas_mass_before, gas_px_before );
+
+  Timers timers;
+  auto accretion = ParticleUpdateFactory::make_instance( "ParticleUpdate_sink_accretion",
+    *s.configMap, foreach_cell, timers );
+
+  ScalarSimulationData scalar_data;
+  scalar_data.set<real_t>( "time", 0.0 );
+  scalar_data.set<real_t>( "dt", 1e-3 );
+  accretion->update( U, scalar_data );
+
+  GlobalSinkTable table = build_global_sink_table( U, foreach_particle, comm, "sinks" );
+  ASSERT_EQ( table.n_tot, 1 );
+  const real_t dM = table.at(0, GlobalSinkTable::MASS) - m0;
+  EXPECT_GT( dM, 0.0 );
+
+  // Whatever the sink gained left the gas
+  real_t gas_mass_after = 0, gas_px_after = 0;
+  global_gas_totals( foreach_cell, U, gas_mass_after, gas_px_after );
+  EXPECT_NEAR( gas_mass_after + dM, gas_mass_before, 1e-10*gas_mass_before );
+}
+
+// ===========================================================================
+void run_merging_pair()
 {
   const int level = 2;
   SinkTestSetup s( level );
@@ -416,3 +559,13 @@ TEST(Test_ParticleUpdate_sink, merging_pair)
 }
 
 } // namespace dyablo
+
+// gtest TEST bodies are private member functions, and nvcc forbids extended
+// __host__ __device__ lambdas there : the Kokkos code lives in free functions above.
+TEST(Test_ParticleUpdate_sink, move_ParticleArray)      { dyablo::run_move_ParticleArray(); }
+TEST(Test_ParticleUpdate_sink, GlobalSinkTable)         { dyablo::run_GlobalSinkTable_replicated(); }
+TEST(Test_ParticleUpdate_sink, formation_single_peak)   { dyablo::run_formation_single_peak(); }
+TEST(Test_ParticleUpdate_sink, accretion_uniform)       { dyablo::run_accretion_uniform(); }
+TEST(Test_ParticleUpdate_sink, accretion_flux_uniform)  { dyablo::run_accretion_flux_uniform_flow_is_null(); }
+TEST(Test_ParticleUpdate_sink, accretion_flux_converge) { dyablo::run_accretion_flux_converging_flow(); }
+TEST(Test_ParticleUpdate_sink, merging_pair)            { dyablo::run_merging_pair(); }
