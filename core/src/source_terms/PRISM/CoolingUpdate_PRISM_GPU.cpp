@@ -913,9 +913,9 @@ public:
         // Compute T/µ
         real_t T_over_mu = (P_physical / rho_physical * mp_over_kb).convert_to(K);
 
-        if (T_over_mu < 2.727e0) {
-          // Can't have gas cool below the CMB temperature floor, and
-          // it will also heavily slow down the chemistry solver
+        if (T_over_mu < 1) {
+          // Gas can't physically cool too far below the CMB floor.
+          // Don't let it get too low, or the solver won't converge.
           T_over_mu = 2.727e0;
         }
 
