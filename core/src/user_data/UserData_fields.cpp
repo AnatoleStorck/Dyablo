@@ -48,27 +48,36 @@ public:
 
     static void initialise_new_aux(FieldView_t& fields, const int index)
     {
+        // Offsets are computed by hand in 64 bits : these arrays can hold more
+        // than 2^32 elements, and Kokkos::View::operator() would wrap silently
+        // (see CellArray_base::at_offset()).
         const auto& U = fields.U;
         const uint32_t extent_0 = U.extent(0);
         const uint32_t extent_2 = U.extent(2);
+        real_t* const U_data = U.data();
+        const size_t U_stride_1 = U.stride(1);
+        const size_t U_stride_2 = U.stride(2);
 
         Kokkos::parallel_for( "zero_new_field", Kokkos::RangePolicy<>(0, extent_0*extent_2),
             KOKKOS_LAMBDA( const uint32_t i )
         {
             const uint32_t iCell = i%extent_0;
             const uint32_t iOct  = i/extent_0;
-            U(iCell, index, iOct) = 0;
+            U_data[ (size_t)iOct*U_stride_2 + index*U_stride_1 + iCell ] = 0;
         });
-        
+
         const auto& Ughost = fields.Ughost;
         const uint32_t extent_0_ghost = Ughost.extent(0);
         const uint32_t extent_2_ghost = Ughost.extent(2);
+        real_t* const Ughost_data = Ughost.data();
+        const size_t Ughost_stride_1 = Ughost.stride(1);
+        const size_t Ughost_stride_2 = Ughost.stride(2);
         Kokkos::parallel_for( "zero_new_field_ghost", Kokkos::RangePolicy<>(0, extent_0_ghost*extent_2_ghost),
             KOKKOS_LAMBDA( const uint32_t i )
         {
             const uint32_t iCell = i%extent_0_ghost;
             const uint32_t iOct  = i/extent_0_ghost;
-            Ughost(iCell, index, iOct) = 0;
+            Ughost_data[ (size_t)iOct*Ughost_stride_2 + index*Ughost_stride_1 + iCell ] = 0;
         });
     }
 

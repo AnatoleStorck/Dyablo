@@ -215,11 +215,22 @@ private:
     KOKKOS_INLINE_FUNCTION
     int get_index_from_varindex_intermediates(VarIndex var) const
     {
-        return fm_intermediates.get_index_from_varindex(var);
+        if constexpr ( has_intermediates )
+            return fm_intermediates.get_index_from_varindex(var);
+        else
+            return 0; // no intermediates : callers guard on a runtime flag, see fm_intermediates
     }
 protected:
+    /// FieldManager holds 2 Kokkos::Array<int,MAX_FIELD_COUNT>, so it is by far the
+    /// biggest part of an accessor (1444B at MAX_FIELD_COUNT=180). Accessors are
+    /// captured by value in every kernel, and a functor above
+    /// CudaTraits::KernelArgumentLimit (32kB) falls back to the GlobalMemory launch
+    /// mechanism, which nvcc fails to compile. Only keep the intermediates manager
+    /// at full size when it can actually be used : it is left default-constructed
+    /// and never read when has_intermediates is false.
+    using FieldManager_intermediates = FieldAccessor_FieldManager<has_intermediates ? _MAX_FIELD_COUNT : 1>;
     FieldAccessor_FieldManager<_MAX_FIELD_COUNT> fm;
-    FieldAccessor_FieldManager<_MAX_FIELD_COUNT> fm_intermediates;
+    FieldManager_intermediates fm_intermediates;
 
     KOKKOS_INLINE_FUNCTION
     int get_index_from_ivar_device(int ivar) const
@@ -235,11 +246,17 @@ protected:
     KOKKOS_INLINE_FUNCTION
     int get_index_from_ivar_device_intermediates(int ivar) const
     {
-        return fm_intermediates.get_index_from_ivar_device(ivar);
+        if constexpr ( has_intermediates )
+            return fm_intermediates.get_index_from_ivar_device(ivar);
+        else
+            return 0; // no intermediates : callers guard on a runtime flag, see fm_intermediates
     }
     int get_index_from_ivar_host_intermediates(int ivar) const
     {
-        return fm_intermediates.get_index_from_ivar_host(ivar);
+        if constexpr ( has_intermediates )
+            return fm_intermediates.get_index_from_ivar_host(ivar);
+        else
+            return 0; // no intermediates : callers guard on a runtime flag, see fm_intermediates
     }
     FieldView_t fields_intermediates;
 };

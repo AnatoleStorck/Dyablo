@@ -682,16 +682,36 @@ public:
     if constexpr( has_ghosts )
     {
       if( iCell.iOct.isGhost )
-        return Ughost(i, ivar, iCell.iOct.iOct);
+        return at_offset(Ughost, i, ivar, iCell.iOct.iOct);
     }
     DYABLO_ASSERT_KOKKOS_DEBUG( !iCell.iOct.isGhost, "Accessing ghost in non-ghosted array" );
-    return U(i, ivar, iCell.iOct.iOct%shape.nbOcts);
+    return at_offset(U, i, ivar, iCell.iOct.iOct%shape.nbOcts);
   }
 
   KOKKOS_INLINE_FUNCTION
   real_t& at( const CellIndex& iCell, int ivar ) const
   {
     return at_ivar(iCell, ivar);
+  }
+
+private:
+  /**
+   * Element access with a 64-bit offset.
+   * Kokkos::View::operator() truncates its offset to 32 bits, so a view holding
+   * more than 2^32 elements silently aliases : accesses beyond that limit wrap
+   * onto the start of the allocation instead of faulting. A cell array is
+   * (nbCellsPerOct x nbFields x nbOcts), so the limit is reached at
+   * nbOcts = 2^32/(nbCellsPerOct*nbFields) -- ~26800 octants for a 512-cell
+   * block with the 313 fields a full-chemistry run allocates.
+   * Strides are read from the view so this stays correct whatever padding
+   * Kokkos chose for the allocation. Only the octant term needs the wide
+   * multiply : the offset inside an octant is bounded by nbCellsPerOct*nbFields.
+   **/
+  KOKKOS_INLINE_FUNCTION
+  static real_t& at_offset( const View_t& V, uint32_t i, uint32_t ivar, uint32_t iOct )
+  {
+    uint32_t offset_in_oct = i + ivar * (uint32_t)V.stride(1);
+    return V.data()[ (size_t)iOct * V.stride(2) + offset_in_oct ];
   }
 };
 
