@@ -249,6 +249,8 @@ private:
   Kokkos::View<ForeachCell::CellIndex*> str_cells;
   uint32_t str_capacity = 0;
   int handoff_pass_cfg;
+  int ions_team_threshold_cfg;
+  int ions_team_size_cfg;
 
   RTZ_type rtz_solver;
 
@@ -299,6 +301,14 @@ public:
     // straggler pools. Small values move more cells (and more copying) into the
     // shared pool; large values make each batch re-run more of the sparse tail.
     handoff_pass_cfg   = configMap.getValue<int>("cooling", "handoff_pass", 2);
+    // Sparse-regime formulation switch. Once the active list drops to this many
+    // cells the fused molecules/ions/commit kernel is launched as one team per
+    // cell instead of one thread per cell, so the metal ionization stages run in
+    // parallel across the team. Thread-per-cell wins while the grid is full (it
+    // keeps ~32x more cells resident); a team only pays off once there are too
+    // few cells to fill the GPU at all. 0 disables it.
+    ions_team_threshold_cfg = configMap.getValue<int>("cooling", "ions_team_threshold", 0);
+    ions_team_size_cfg      = configMap.getValue<int>("cooling", "ions_team_size", 32);
     // Safety cap on the number of subcycle iterations per cell
     max_substeps       = configMap.getValue<int>("cooling", "max_substeps", 100000);
     // Cells are processed in batches of at most this many, sized to bound the
@@ -470,6 +480,27 @@ public:
     // Solver data shared by all kernels
     const TabulatedData tabData = rtz_solver.get_tabData();
     const Element* elements = rtz_solver.elements_d.data();
+
+    // Work list for the team metal-ion sweep: one entry per (element, stage) of
+    // every metal in the network, packed as (element << 8 | stage). Metals only
+    // (Z >= 3) -- H and He are updated sequentially by HandHe_ions_step. The
+    // stage count is the element's FULL ladder (n_ions = Z + 1), matching
+    // init_offsets. Only read when ions_team_threshold > 0.
+    Kokkos::View<uint16_t*> ion_map_d( Kokkos::view_alloc( "PRISM_ion_map", Kokkos::WithoutInitializing ),
+                                       (size_t)MAX_TOTAL_IONS );
+    int n_ion_work = 0;
+    {
+      auto ion_map_h = Kokkos::create_mirror_view( ion_map_d );
+      for( int i = 3; i < MAX_ELEMENTS; ++i )
+      {
+        if( this->ions2passive[i] == -1 ) continue;   // element not in the network
+        const int n_ions = i + 1;
+        for( int j = 0; j < n_ions; ++j )
+          ion_map_h( n_ion_work++ ) = (uint16_t)( (i << 8) | j );
+      }
+      Kokkos::deep_copy( ion_map_d, ion_map_h );
+    }
+    const uint16_t* ion_map_ptr = ion_map_d.data();
     const double UV_G0 = rtz_solver.get_UV_background_G0();
     const double primary_cr_rate = rtz_solver.get_generic_cosmic_ray_ionization_rate();
 
@@ -545,6 +576,8 @@ public:
     // Only cells that survive handoff_passes split passes land here, which on
     // the G8 testbed is a couple of percent of the grid.
     const int handoff_passes = is_gpu ? this->handoff_pass_cfg : max_substeps;
+    const int ions_team_threshold = is_gpu ? this->ions_team_threshold_cfg : 0;
+    const int ions_team_size      = this->ions_team_size_cfg;
     Kokkos::View<uint32_t> str_count_d("PRISM_str_count");
     uint32_t str_count = 0;
     auto ensure_str_capacity = [&]( uint32_t need ) -> void
@@ -724,6 +757,69 @@ public:
           // (2b) cooling Newton step from the pair: one thread per cell
           // (3) molecules: one thread per cell
           // (4a) H/He ions: one thread per cell. Hydrogen and helium updated sequentially
+          if( ions_team_threshold > 0 && n_active <= (uint32_t)ions_team_threshold )
+          {
+            // Sparse regime. Thread-per-cell is the right shape while the grid is
+            // full, but the deep straggler tail runs a handful of blocks across
+            // 132 SMs, so the machine sits idle on a few hundred cells. There the
+            // only parallelism left is *inside* the cell: the metal sweep is
+            // Jacobi over a frozen snapshot, so its stages are independent, and
+            // the full network has ~107 of them -- enough to saturate a 32-lane
+            // team. (The formulation was dropped when the network had 16 metal
+            // stages and half of every warp idled; that no longer holds.) The
+            // sequential phases stay on lane 0.
+            using xion_t = CompactIonData::xion_t;
+            using team_policy_t = Kokkos::TeamPolicy<>;
+            const size_t snap_bytes = (size_t)MAX_TOTAL_IONS * sizeof(xion_t);
+            team_policy_t policy( (int)n_active, ions_team_size );
+            policy.set_scratch_size( 0, Kokkos::PerTeam( snap_bytes ) );
+            Kokkos::parallel_for( "PRISM_molecules_ions_commit_team", policy,
+              KOKKOS_LAMBDA( const team_policy_t::member_type& team )
+            {
+              const uint32_t s = active( team.league_rank() );
+              if( done_pool(s) ) return;
+              PrismCellState& cs = cell_state(s);
+              xion_t* x_snap = (xion_t*) team.team_shmem().get_shmem( snap_bytes );
+
+              Kokkos::single( Kokkos::PerTeam(team), [&]() {
+                cooling_update<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    cs.cool_rate_pair, ddt_pool(s), cs.loc_rho, cs.sub );
+
+                molecular_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    ddt_pool(s), elements, ion_state(s), tabData, cs.nCO,
+                    cs.dust_ratio, UV_G0, cs.N_phot_new, cs.sub );
+              });
+              team.team_barrier();
+
+              // team overload: sequential H/He on lane 0, then a barrier
+              HandHe_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                  team, ddt_pool(s), elements, ion_state(s), tabData, flags,
+                  cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
+                  cs.N_phot_new, cs.sub );
+
+              metal_ions_step<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                  team, ddt_pool(s), elements, ion_state(s), tabData, flags,
+                  cs.dust_ratio, UV_G0, primary_cr_rate, cs.ss_factor,
+                  cs.N_phot_new, ion_map_ptr, n_ion_work, x_snap, cs.sub );
+              team.team_barrier();
+
+              Kokkos::single( Kokkos::PerTeam(team), [&]() {
+                double ddt = ddt_pool(s);
+                double total_time = total_time_pool(s);
+                subcycle_commit_and_control<constant_temperature, include_H2, include_CO, rt_advect, include_self_shielding>(
+                    elements, tabData, ion_state(s), cs.nCO, cs.N_PHOT, cs.F_PHOT,
+                    cs.N_phot_new, cs.phot_att, ddt, total_time, cs.sub,
+                    rt_smooth, cs.dFpdt );
+                ddt_pool(s) = ddt;
+                total_time_pool(s) = total_time;
+
+                if( fabs(total_time - dt_s)/dt_s < 1e-6 )
+                  done_pool(s) = 1;
+              });
+            });
+          }
+          else
+          {
           Kokkos::parallel_for( "PRISM_molecules_ions_commit", Kokkos::RangePolicy<>(0, n_active),
             KOKKOS_LAMBDA( uint32_t idx )
           {
@@ -772,6 +868,7 @@ public:
             if( fabs(total_time - dt_s)/dt_s < 1e-6 )
               done_pool(s) = 1;
           });
+          }
 
           ++pass;
 
