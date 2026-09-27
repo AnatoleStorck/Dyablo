@@ -102,7 +102,6 @@ set( ic_src
     ${CMAKE_CURRENT_SOURCE_DIR}/passive_scalars/PassiveScalar_IC_refinement.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/init/rt/InitialConditions_stromgren.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/init/InitialConditions_gadget.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/init/InitialConditions_uniform_metallicity.cpp
 )
 
 set( mpi_src
